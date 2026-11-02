@@ -47,7 +47,7 @@ struct FilterPanelView: View {
             .navigationTitle("筛选")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button("完成") { dismiss() }
                 }
             }
@@ -176,18 +176,6 @@ struct FilterPanelView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.headline)
-            FlowLayout(items: content)
-        }
-    }
-}
-
-/// 简单流式布局，用于胶囊自动换行
-private struct FlowLayout<Content: View>: View {
-    let content: () -> Content
-
-    var body: some View {
-        // iOS 16 无 Layout 协议流式实现也可以手写；此处用换行容器近似实现
-        VStack(alignment: .leading, spacing: 8) {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
