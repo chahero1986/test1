@@ -88,7 +88,7 @@ private struct ProtectedPermissionInfoView: View {
             .navigationTitle("权限说明")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button("完成") { dismiss() }
                 }
             }
