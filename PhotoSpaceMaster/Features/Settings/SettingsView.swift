@@ -5,12 +5,10 @@ struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showResetConfirm = false
 
-    private var settings: SettingsStore { appState.settings }
-
     var body: some View {
         Form {
             Section("主题") {
-                Picker(selection: $settings.theme) {
+                Picker(selection: $appState.settings.theme) {
                     ForEach(ThemeMode.allCases) { mode in
                         Label(mode.title, systemImage: mode.icon).tag(mode)
                     }
@@ -20,7 +18,7 @@ struct SettingsView: View {
             }
 
             Section("排序") {
-                Picker(selection: $settings.sortOrder) {
+                Picker(selection: $appState.settings.sortOrder) {
                     ForEach(SortOrder.allCases) { order in
                         Label(order.title, systemImage: order.icon).tag(order)
                     }
@@ -30,10 +28,10 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle(isOn: $settings.resumeToLastPosition) {
+                Toggle(isOn: $appState.settings.resumeToLastPosition) {
                     Label("定位到上次操作位置", systemImage: "location.magnifyingglass")
                 }
-                Toggle(isOn: $settings.skipProtectedItems) {
+                Toggle(isOn: $appState.settings.skipProtectedItems) {
                     Label("跳过免删除项目", systemImage: "hand.raised")
                 }
             } footer: {
@@ -69,7 +67,7 @@ struct SettingsView: View {
             titleVisibility: .visible
         ) {
             Button("恢复默认", role: .destructive) {
-                settings.resetToDefaults()
+                appState.settings.resetToDefaults()
             }
             Button("取消", role: .cancel) {}
         }
