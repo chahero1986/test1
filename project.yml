@@ -1,0 +1,41 @@
+name: PhotoSpaceMaster
+options:
+  bundleIdPrefix: com.photospacemaster
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+targets:
+  PhotoSpaceMaster:
+    type: application
+    platform: iOS
+    sources:
+      - path: PhotoSpaceMaster
+    info:
+      path: PhotoSpaceMaster/Info.plist
+      properties:
+        CFBundleDisplayName: 相册空间大师
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSPhotoLibraryUsageDescription: 需要访问您的相册，以便浏览、整理和清理照片。所有处理均在本地完成，不会上传任何照片。
+        NSPhotoLibraryAddUsageDescription: 需要保存权限以便将整理结果写回相册。
+        NSUserTrackingUsageDescription: 为了向您展示更相关的广告，我们需要获取您的广告标识符权限。拒绝授权不影响使用，将展示非个性化广告。
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: false
+
+schemes:
+  PhotoSpaceMaster:
+    build:
+      targets:
+        PhotoSpaceMaster: all
+    run:
+      config: Debug
+    archive:
+      config: Release

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="23000" systemVersion="24C101" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithSwiftData="NO" userDefinedModelVersionIdentifier="">
+    <entity name="CleanupRecord" representedClassName="CleanupRecord" syncable="YES" codeGenerationType="none">
+        <attribute name="localAssetId" optional="NO" attributeType="String"/>
+        <attribute name="eventDate" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="mediaType" optional="NO" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="byteSize" optional="NO" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="status" optional="NO" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="ProtectedItem" representedClassName="ProtectedItem" syncable="YES" codeGenerationType="none">
+        <attribute name="localAssetId" optional="NO" attributeType="String"/>
+        <attribute name="addedDate" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+    </entity>
+    <entity name="RatingItem" representedClassName="RatingItem" syncable="YES" codeGenerationType="none">
+        <attribute name="localAssetId" optional="NO" attributeType="String"/>
+        <attribute name="stars" optional="NO" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="TrashItem" representedClassName="TrashItem" syncable="YES" codeGenerationType="none">
+        <attribute name="localAssetId" optional="NO" attributeType="String"/>
+        <attribute name="addedDate" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="mediaType" optional="NO" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="byteSize" optional="NO" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="durationSeconds" optional="NO" attributeType="Double" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="fileName" optional="YES" attributeType="String"/>
+        <attribute name="pixelWidth" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="pixelHeight" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+    </entity>
+</model>
