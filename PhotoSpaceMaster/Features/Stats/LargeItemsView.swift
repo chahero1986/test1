@@ -65,7 +65,7 @@ struct LargeItemsView: View {
         .navigationTitle(mode.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .navigationBarTrailing) {
                 thresholdMenu
             }
         }
