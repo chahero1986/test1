@@ -61,6 +61,22 @@ final class PhotoLibraryService {
         return list
     }
 
+    /// 相册列表预览缩略图：取相册内最新的前 N 项
+    func previewInfos(inCollectionId collectionId: String, limit: Int) -> [AssetInfo] {
+        guard hasAccess else { return [] }
+        let collections = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [collectionId], options: nil)
+        guard let collection = collections.firstObject else { return [] }
+        let options = PHFetchOptions()
+        options.fetchLimit = limit
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        let assets = PHAsset.fetchAssets(in: collection, options: options)
+        var list: [AssetInfo] = []
+        assets.enumerateObjects { asset, _, _ in
+            list.append(Self.info(from: asset))
+        }
+        return list
+    }
+
     // MARK: - 元数据归一化
 
     static func info(from asset: PHAsset) -> AssetInfo {
@@ -78,6 +94,8 @@ final class PhotoLibraryService {
             kind: kind,
             byteSize: byteSize(of: asset),
             durationSeconds: asset.duration,
+            pixelWidth: asset.pixelWidth,
+            pixelHeight: asset.pixelHeight,
             isFavorite: asset.isFavorite,
             creationDate: asset.creationDate,
             isLivePhoto: isLive,

@@ -9,6 +9,7 @@ struct HomeTimelineView: View {
     @State private var isSelecting = false
     @State private var selection = Set<String>()
     @State private var showFilter = false
+    @State private var viewingAsset: AssetInfo?
     @State private var initialScrollDone = false
 
     private struct DayGroup: Identifiable {
@@ -52,6 +53,7 @@ struct HomeTimelineView: View {
                     }
                 },
                 makeMenu: { menu(for: $0) },
+                onOpenAsset: { viewingAsset = $0 },
                 bottomBar: { homeBottomBar }
             )
             .navigationTitle("相册空间大师")
@@ -104,6 +106,11 @@ struct HomeTimelineView: View {
                 }
             }
             .sheet(isPresented: $showFilter) { FilterPanelView() }
+            .fullScreenCover(item: $viewingAsset) { asset in
+                NavigationStack {
+                    PhotoDetailView(assets: groups.flatMap(\.assets), startId: asset.id)
+                }
+            }
             .onAppear {
                 guard !initialScrollDone,
                       appState.settings.resumeToLastPosition,

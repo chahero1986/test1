@@ -1,12 +1,14 @@
 import SwiftUI
+import UIKit
 
-/// 相册 Tab：按系统相簿 / 智能相簿分组，点入复用网格组件。
+/// 相册 Tab：按系统相簿 / 智能相簿分组（带预览缩略图），点入复用网格组件。
 struct AlbumsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var library: LibraryStore
 
     @State private var smartAlbums: [AlbumSummary] = []
     @State private var userAlbums: [AlbumSummary] = []
+    @State private var previews: [String: [AssetInfo]] = [:]
 
     private let service = PhotoLibraryService.shared
 
@@ -45,18 +47,61 @@ struct AlbumsView: View {
         guard service.hasAccess else { return }
         smartAlbums = service.smartAlbums()
         userAlbums = service.userAlbums()
+        // 预览缩略图（每个相册取最新 3 张）
+        for album in smartAlbums + userAlbums where previews[album.id] == nil {
+            previews[album.id] = service.previewInfos(inCollectionId: album.id, limit: 3)
+        }
     }
 
     private func row(_ album: AlbumSummary) -> some View {
-        HStack {
-            Image(systemName: album.icon)
-                .foregroundColor(.accentColor)
-                .frame(width: 28)
+        HStack(spacing: 10) {
+            previewThumbs(album)
             Text(album.title)
             Spacer()
             Text("\(album.count)")
                 .foregroundColor(.secondary)
                 .font(.subheadline)
+        }
+    }
+
+    @ViewBuilder
+    private func previewThumbs(_ album: AlbumSummary) -> some View {
+        let infos = previews[album.id] ?? []
+        if infos.isEmpty {
+            Image(systemName: album.icon)
+                .foregroundColor(.accentColor)
+                .frame(width: 56, height: 56)
+                .background(Color(.secondarySystemFill))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            HStack(spacing: 2) {
+                ForEach(Array(infos.prefix(3))) { info in
+                    AlbumThumb(info: info)
+                }
+            }
+        }
+    }
+}
+
+/// 相册列表预览缩略图
+struct AlbumThumb: View {
+    let info: AssetInfo
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color(.systemGray5)
+            }
+        }
+        .frame(width: 56, height: 56)
+        .clipped()
+        .task(id: info.id) {
+            image = await ThumbnailManager.shared.thumbnail(for: info, side: 56)
         }
     }
 }
@@ -73,6 +118,7 @@ struct AlbumAssetsView: View {
     @State private var assets: [AssetInfo] = []
     @State private var selection = Set<String>()
     @State private var isSelecting = false
+    @State private var viewingAsset: AssetInfo?
 
     var body: some View {
         PhotoGridView(
@@ -80,11 +126,17 @@ struct AlbumAssetsView: View {
             selection: $selection,
             isSelecting: $isSelecting,
             makeMenu: { CommonAssetMenu.make(for: $0, appState: appState, ratings: ratings) },
+            onOpenAsset: { viewingAsset = $0 },
             bottomBar: { cleanupBottomBar }
         )
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: reload)
+        .fullScreenCover(item: $viewingAsset) { asset in
+            NavigationStack {
+                PhotoDetailView(assets: assets, startId: asset.id)
+            }
+        }
     }
 
     private func reload() {

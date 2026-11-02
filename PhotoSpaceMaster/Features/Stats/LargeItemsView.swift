@@ -38,6 +38,7 @@ struct LargeItemsView: View {
 
     @State private var selection = Set<String>()
     @State private var isSelecting = false
+    @State private var viewingAsset: AssetInfo?
 
     private var items: [AssetInfo] {
         let minBytes = Int64(appState.settings[keyPath: mode.thresholdMBKeyPath]) * 1024 * 1024
@@ -60,10 +61,16 @@ struct LargeItemsView: View {
             selection: $selection,
             isSelecting: $isSelecting,
             makeMenu: { CommonAssetMenu.make(for: $0, appState: appState, ratings: ratings) },
+            onOpenAsset: { viewingAsset = $0 },
             bottomBar: { largeItemsBottomBar }
         )
         .navigationTitle(mode.title)
         .navigationBarTitleDisplayMode(.inline)
+        .fullScreenCover(item: $viewingAsset) { asset in
+            NavigationStack {
+                PhotoDetailView(assets: items, startId: asset.id)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 thresholdMenu

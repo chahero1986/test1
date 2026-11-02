@@ -44,6 +44,8 @@ struct AssetInfo: Identifiable, Hashable {
     let kind: MediaKind
     let byteSize: Int64
     let durationSeconds: Double
+    let pixelWidth: Int
+    let pixelHeight: Int
     let isFavorite: Bool
     let creationDate: Date?
     let isLivePhoto: Bool

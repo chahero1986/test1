@@ -5,6 +5,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+echo "==> 0/4 选择最新版 Xcode（工程格式需 Xcode 16+）"
+if [ -d "/Applications/Xcode.app" ]; then
+  sudo xcode-select -s "/Applications/Xcode.app" 2>/dev/null || true
+fi
+xcodebuild -version
+
 echo "==> 1/4 生成 Xcode 工程"
 command -v xcodegen >/dev/null 2>&1 || { echo "请先安装: brew install xcodegen"; exit 1; }
 xcodegen generate

@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreData
+import Combine
 
 // MARK: - 主题 / 排序枚举
 
@@ -99,6 +100,17 @@ final class SettingsStore: ObservableObject {
 @MainActor
 final class AppState: ObservableObject {
     var settings = SettingsStore()
+
+    /// 把 SettingsStore 的变更转发到 AppState，保证主题等设置全局生效
+    private var settingsCancellable: AnyCancellable?
+
+    init() {
+        settingsCancellable = settings.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+    }
 
     /// 筛选状态：会话内保持（切 Tab、进出子页不重置），App 冷启动后恢复默认
     @Published var filter = PhotoFilter()

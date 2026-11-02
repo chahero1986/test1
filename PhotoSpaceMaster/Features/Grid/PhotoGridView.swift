@@ -11,6 +11,8 @@ struct PhotoGridView<BottomBar: View>: View {
     let assets: [AssetInfo]
     var onCellAppear: ((AssetInfo) -> Void)? = nil
     var makeMenu: ((AssetInfo) -> AnyView)? = nil
+    /// 非多选状态下点击照片 → 打开大图查看器
+    var onOpenAsset: ((AssetInfo) -> Void)? = nil
 
     @Binding var selection: Set<String>
     @Binding var isSelecting: Bool
@@ -25,6 +27,7 @@ struct PhotoGridView<BottomBar: View>: View {
         isSelecting: Binding<Bool>,
         onCellAppear: ((AssetInfo) -> Void)? = nil,
         makeMenu: ((AssetInfo) -> AnyView)? = nil,
+        onOpenAsset: ((AssetInfo) -> Void)? = nil,
         @ViewBuilder bottomBar: @escaping () -> BottomBar
     ) {
         self.assets = assets
@@ -32,6 +35,7 @@ struct PhotoGridView<BottomBar: View>: View {
         self._isSelecting = isSelecting
         self.onCellAppear = onCellAppear
         self.makeMenu = makeMenu
+        self.onOpenAsset = onOpenAsset
         self.bottomBar = bottomBar
     }
 
@@ -90,12 +94,15 @@ struct PhotoGridView<BottomBar: View>: View {
     }
 
     private func handleTap(_ info: AssetInfo) {
-        guard isSelecting else { return }
-        if selection.contains(info.id) {
-            selection.remove(info.id)
-        } else {
-            selection.insert(info.id)
+        guard !isSelecting else {
+            if selection.contains(info.id) {
+                selection.remove(info.id)
+            } else {
+                selection.insert(info.id)
+            }
+            return
         }
+        onOpenAsset?(info)
     }
 }
 
@@ -110,6 +117,7 @@ struct GridCellView: View {
     var menu: AnyView?
 
     @State private var image: UIImage?
+    @EnvironmentObject private var appState: AppState
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -148,6 +156,22 @@ struct GridCellView: View {
         .overlay {
             if isSelecting && isSelected {
                 Rectangle().stroke(Color.accentColor, lineWidth: 2)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            // 标记角标：红色 X = 已入垃圾箱；绿色 ✓ = 免删除
+            if appState.isTrashed(info.id) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.white)
+                    .background(Circle().fill(.red))
+                    .padding(4)
+            } else if appState.isProtected(info.id) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.white)
+                    .background(Circle().fill(.green))
+                    .padding(4)
             }
         }
         .contentShape(Rectangle())

@@ -40,6 +40,7 @@ struct FilterPanelView: View {
                     sourceSection
                     typeSection
                     albumSection
+                    browseSection
                     resetButton
                 }
                 .padding()
@@ -158,6 +159,25 @@ struct FilterPanelView: View {
                 )
             }
         }
+    }
+
+    // MARK: - 浏览行为（大图查看时是否跳过免删除项目）
+
+    private var browseSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("浏览")
+                .font(.headline)
+            Toggle(isOn: Binding(
+                get: { appState.settings.skipProtectedItems },
+                set: { appState.settings.skipProtectedItems = $0 }
+            )) {
+                Label("自动跳过免删除项目", systemImage: "forward.end")
+            }
+            Text("开启后，大图查看的上一张/下一张以及标记照片后的自动前进，都会跳过带免删除标志的照片")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var resetButton: some View {
