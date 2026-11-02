@@ -7,15 +7,17 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-15 默认 Xcode 16，兼容 XcodeGen 新版生成的工程格式 (objectVersion 77)
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show toolchain
+      - name: Select newest Xcode
         run: |
+          ls /Applications | grep Xcode
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
           xcodebuild -version
-          swift --version
 
       - name: Install XcodeGen
         run: brew install xcodegen
