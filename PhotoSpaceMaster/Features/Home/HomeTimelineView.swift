@@ -35,8 +35,8 @@ struct HomeTimelineView: View {
         let ascending = appState.settings.sortOrder == .ascending
         return buckets
             .sorted { ascending ? $0.key < $1.key : $0.key > $1.key }
-            .map { key, value in
-                DayGroup(id: key, title: Self.dateFormatter.string(from: key), assets: value)
+            .map {
+                DayGroup(id: $0.key, title: Self.dateFormatter.string(from: $0.key), assets: $0.value)
             }
     }
 
@@ -57,7 +57,7 @@ struct HomeTimelineView: View {
             .navigationTitle("相册空间大师")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Button {
                         showFilter = true
                     } label: {
