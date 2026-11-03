@@ -182,12 +182,12 @@ struct PhotoDetailView: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 15)
                     .updating($dragOffset) { value, state, _ in
-                        if isZoomed { state = value }
+                        if isZoomed { state = value.translation }
                     }
                     .onEnded { value in
                         if isZoomed {
-                            panOffset = CGSize(width: panOffset.width + value.width,
-                                               height: panOffset.height + value.height)
+                            panOffset = CGSize(width: panOffset.width + value.translation.width,
+                                               height: panOffset.height + value.translation.height)
                         } else {
                             handleSwipe(value)
                         }
