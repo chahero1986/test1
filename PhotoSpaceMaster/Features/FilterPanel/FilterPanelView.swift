@@ -241,7 +241,7 @@ struct FilterPanelView: View {
             }
             .buttonStyle(.bordered)
             .disabled(appState.settings.bookmarkAssetId.isEmpty)
-            Text("在照片详情页下方点「定位」插入书签，再点「转到定位」即可直接跳到该书签所在位置")
+            Text("在照片详情页下方点「定位」插入书签；点「转到定位」直接打开书签照片，关闭查看器后会自动回到该书签前后的网格位置")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }

@@ -42,9 +42,10 @@ final class ThumbnailManager {
         return await withCheckedContinuation { continuation in
             manager.requestImage(for: asset, targetSize: target, contentMode: .aspectFill, options: options) { image, _ in
                 if let image {
-                    self.cache.setObject(image, forKey: key)
+                    // 预解码：避免首次显示时在主线程解码造成掉帧（闪烁）
+                    self.cache.setObject(image.preparingForDisplay() ?? image, forKey: key)
                 }
-                continuation.resume(returning: image)
+                continuation.resume(returning: image.map { $0.preparingForDisplay() ?? $0 })
             }
         }
     }
@@ -66,9 +67,10 @@ final class ThumbnailManager {
         return await withCheckedContinuation { continuation in
             manager.requestImage(for: asset, targetSize: target, contentMode: .aspectFit, options: options) { image, _ in
                 if let image {
-                    self.cache.setObject(image, forKey: key)
+                    // 预解码：大图首次显示直接解码完成，避免主线程解码掉帧
+                    self.cache.setObject(image.preparingForDisplay() ?? image, forKey: key)
                 }
-                continuation.resume(returning: image)
+                continuation.resume(returning: image.map { $0.preparingForDisplay() ?? $0 })
             }
         }
     }

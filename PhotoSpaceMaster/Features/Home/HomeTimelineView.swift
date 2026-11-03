@@ -16,6 +16,8 @@ struct HomeTimelineView: View {
     // 定位书签跳转（配合 PhotoGridView 的 jumpToId / jumpToken）
     @State private var jumpTargetId: String?
     @State private var jumpToken = 0
+    // 最近一次从网格打开的照片（关闭查看器后定位回它的位置）
+    @State private var lastOpenedId: String?
 
     private struct DayGroup: Identifiable {
         let id: Date
@@ -61,7 +63,10 @@ struct HomeTimelineView: View {
             selection: $selection,
             isSelecting: $isSelecting,
             makeMenu: { menu(for: $0) },
-            onOpenAsset: { viewingAsset = $0 },
+            onOpenAsset: {
+                lastOpenedId = $0.id
+                viewingAsset = $0
+            },
             makeSectionTitle: sectionTitle,
             makeSectionHeader: dayHeader,
             jumpToId: jumpTargetId,
@@ -92,17 +97,29 @@ struct HomeTimelineView: View {
                 }
             }
             .sheet(isPresented: $showFilter, onDismiss: { rebuildGroups() }) { FilterPanelView() }
-            .fullScreenCover(item: $viewingAsset) { asset in
+            .fullScreenCover(item: $viewingAsset, onDismiss: {
+                // 关闭查看器后，网格定位到刚看过的照片位置（含「转到定位」打开的书签照片）
+                guard let id = lastOpenedId else { return }
+                jumpTargetId = id
+                jumpToken += 1
+            }) { asset in
                 NavigationStack {
                     PhotoDetailView(assets: flatAssets, startId: asset.id)
                 }
             }
             .onAppear(perform: rebuildGroups)
             .onChange(of: appState.bookmarkJumpToken) { _ in
-                // 「转到定位」：跳到书签项目所在位置
-                guard !appState.settings.bookmarkAssetId.isEmpty else { return }
-                jumpTargetId = appState.settings.bookmarkAssetId
-                jumpToken += 1
+                // 「转到定位」：直接打开书签照片；关闭查看器后会自动定位到它的网格位置
+                let bookmarkId = appState.settings.bookmarkAssetId
+                guard !bookmarkId.isEmpty else { return }
+                if let info = flatAssets.first(where: { $0.id == bookmarkId }) {
+                    lastOpenedId = info.id
+                    viewingAsset = info
+                } else {
+                    // 书签照片被筛选条件排除时，退回为网格定位
+                    jumpTargetId = bookmarkId
+                    jumpToken += 1
+                }
             }
             .onChange(of: library.assets.count) { _ in rebuildGroups() }
             .onChange(of: appState.filter) { _ in rebuildGroups() }

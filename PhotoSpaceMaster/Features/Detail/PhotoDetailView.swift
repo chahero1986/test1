@@ -618,8 +618,8 @@ struct PhotoDetailView: View {
             let img = await ThumbnailManager.shared.largeImage(for: info, side: 1200)
             // 过期保护：快速连续滑动时只应用仍处于当前页的结果
             guard current.id == info.id, let img else { return }
-            // 同一张照片的清晰度升级，交叉淡化替换
-            withAnimation(.easeOut(duration: 0.18)) { image = img }
+            // 同一张照片的清晰度升级：瞬时替换（不做交叉淡化，避免轻微闪烁）
+            image = img
         }
         // 幻灯片相邻照片预加载（视频显示黑底占位）
         Task {
