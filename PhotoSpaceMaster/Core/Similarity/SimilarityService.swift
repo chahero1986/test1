@@ -24,10 +24,10 @@ final class SimilarityStore: ObservableObject {
         var freeBytes: Int64 = 0
     }
 
-    // 相似度阈值
-    static let duplicateThreshold = 2
-    static let verySimilarThreshold = 6
-    static let similarThreshold = 10
+    // 相似度阈值（nonisolated：供非隔离上下文引用，消除 Swift 6 隔离警告）
+    nonisolated static let duplicateThreshold = 2
+    nonisolated static let verySimilarThreshold = 6
+    nonisolated static let similarThreshold = 10
 
     /// asset id → pHash
     private var hashes: [String: UInt64] = [:]
