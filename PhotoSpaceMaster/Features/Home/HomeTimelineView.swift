@@ -94,6 +94,16 @@ struct HomeTimelineView: View {
                         ProtectedView()
                     } label: {
                         Image(systemName: "hand.raised")
+                            .overlay(alignment: .topTrailing) {
+                                if appState.protectedIds.count > 0 {
+                                    Text("\(appState.protectedIds.count)")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(3)
+                                        .background(Circle().fill(.green))
+                                        .offset(x: 8, y: -8)
+                                }
+                            }
                     }
                     .accessibilityLabel("免删除项目")
 

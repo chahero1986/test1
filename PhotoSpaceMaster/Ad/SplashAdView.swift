@@ -5,7 +5,7 @@ struct SplashAdView: View {
     var onFinish: () -> Void
 
     @StateObject private var coordinator = SplashAdCoordinator()
-    @State private var remaining = 5
+    @State private var remaining = 8
     @State private var didFinish = false
 
     var body: some View {

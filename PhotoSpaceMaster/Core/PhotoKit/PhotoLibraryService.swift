@@ -181,4 +181,15 @@ final class PhotoLibraryService {
             PHAssetChangeRequest.deleteAssets(fetch)
         }
     }
+
+    // MARK: - 收藏（写回系统相册）
+
+    func setFavorite(_ favorite: Bool, id: String) {
+        guard hasAccess else { return }
+        let fetch = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
+        guard let asset = fetch.firstObject else { return }
+        PHPhotoLibrary.shared().performChanges {
+            PHAssetChangeRequest(for: asset).isFavorite = favorite
+        }
+    }
 }

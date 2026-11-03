@@ -4,7 +4,8 @@ import SwiftUI
 struct PhotoSpaceMasterApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var library = LibraryStore()
-    @State private var showSplash = true
+    @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "onboarding.completed")
+    @State private var showSplash = false
 
     var body: some Scene {
         WindowGroup {
@@ -26,8 +27,18 @@ struct PhotoSpaceMasterApp: App {
                     .transition(.opacity)
                     .zIndex(10)
                 }
+
+                if showOnboarding {
+                    OnboardingView {
+                        showOnboarding = false
+                        showSplash = true
+                    }
+                    .transition(.opacity)
+                    .zIndex(20)
+                }
             }
             .animation(.easeOut(duration: 0.25), value: showSplash)
+            .animation(.easeOut(duration: 0.25), value: showOnboarding)
             .preferredColorScheme(appState.settings.theme.colorScheme)
         }
     }

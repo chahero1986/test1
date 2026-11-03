@@ -4,6 +4,9 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showResetConfirm = false
+    @State private var showUpdateAlert = false
+
+    static let appVersion = "V2026.1103"
 
     var body: some View {
         Form {
@@ -48,19 +51,49 @@ struct SettingsView: View {
             }
 
             Section("关于") {
-                HStack {
-                    Text("版本")
-                    Spacer()
-                    Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0")
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("所有数据处理均在本地完成，不会上传任何照片")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(.red)
+
+                    HStack {
+                        Text(Self.appVersion)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("检查更新") {
+                            showUpdateAlert = true
+                        }
+                        .font(.footnote)
+                    }
+
+                    HStack {
+                        Text("邮箱")
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("386047639@qq.com")
+                            .textSelection(.enabled)
+                    }
+                    HStack {
+                        Text("微信")
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("graphite1")
+                            .textSelection(.enabled)
+                    }
+                    Text("京ICP备XXXXXXX号")
+                        .font(.footnote)
                         .foregroundColor(.secondary)
                 }
-                Text("所有数据处理均在本地完成，不会上传任何照片。")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
+                .padding(.vertical, 4)
             }
         }
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
+        .alert("检查更新", isPresented: $showUpdateAlert) {
+            Button("确定", role: .cancel) {}
+        } message: {
+            Text("当前已是最新版本 \(Self.appVersion)")
+        }
         .confirmationDialog(
             "确定恢复默认设置吗？主题、排序、定位、开关等全部项目将被重置。",
             isPresented: $showResetConfirm,

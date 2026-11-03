@@ -12,7 +12,7 @@ import SwiftUI
 /// 4. 儿童类目：如上架儿童分区，配置 setChildDirected 并关闭个性化推荐。
 final class PangleSplashProvider: SplashAdProvider {
 
-    let countdownSeconds = 5
+    let countdownSeconds = 8
     var isReady = false
 
     #if canImport(BUAdSDK)

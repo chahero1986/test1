@@ -158,20 +158,25 @@ struct GridCellView: View {
                 Rectangle().stroke(Color.accentColor, lineWidth: 2)
             }
         }
-        .overlay(alignment: .topLeading) {
-            // 标记角标：红色 X = 已入垃圾箱；绿色 ✓ = 免删除
-            if appState.isTrashed(info.id) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.white)
-                    .background(Circle().fill(.red))
-                    .padding(4)
-            } else if appState.isProtected(info.id) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.white)
-                    .background(Circle().fill(.green))
-                    .padding(4)
+        .overlay(alignment: .topTrailing) {
+            // 标记角标：红色 X = 已入垃圾箱；绿色 ✓ = 免删除（两者可同时标记，上下排列）
+            // 多选模式下隐藏，避免与选中圆圈重叠
+            if !isSelecting {
+                VStack(spacing: 3) {
+                    if appState.isTrashed(info.id) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.white)
+                            .background(Circle().fill(.red))
+                    }
+                    if appState.isProtected(info.id) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                            .background(Circle().fill(.green))
+                    }
+                }
+                .padding(4)
             }
         }
         .contentShape(Rectangle())

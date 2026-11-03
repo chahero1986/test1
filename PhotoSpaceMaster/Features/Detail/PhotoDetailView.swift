@@ -3,28 +3,38 @@ import AVKit
 
 /// 大图查看器
 /// - 顶部信息：日期时间 / 类型·分辨率·大小 / 地点·海拔 / 相机参数
-/// - 右上角：垃圾箱（数量角标）、免删除（数量角标）、设置
-/// - 双指缩放；左滑=下一张、右滑=上一张；上滑=移入垃圾箱（需确认）、下滑=免删除
-/// - 标记后按当前浏览方向自动前进，且跳过免删除（受筛选面板"自动跳过"开关控制）
+/// - 左上角返回；右上角：垃圾箱（数量角标）、免删除（数量角标）、设置
+/// - 双指缩放；左滑=下一张、右滑=上一张；上滑=直接移入垃圾箱（免确认）、下滑=免删除
+/// - 标记后飞出动画 + 按当前浏览方向自动前进；打开/切换均有过渡动画
+/// - 底部：收藏、评分（点开评星级）
 struct PhotoDetailView: View {
     /// forward = 下一张（新→旧）；backward = 上一张方向（旧→新）
     enum Direction { case forward, backward }
+    private enum MarkKind { case trash, protect }
 
     let assets: [AssetInfo]      // 调用方按 新→旧 排序
     let startId: String
 
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var ratings: RatingService
     @Environment(\.dismiss) private var dismiss
+
+    private let service = PhotoLibraryService.shared
 
     @State private var index: Int = 0
     @State private var direction: Direction = .forward
-    @State private var showDeleteConfirm = false
+    @State private var appeared = false
 
     // 缩放与拖动
     @State private var scale: CGFloat = 1
     @GestureState private var pinchScale: CGFloat = 1
     @State private var panOffset: CGSize = .zero
     @GestureState private var dragOffset: CGSize = .zero
+
+    // 标记飞出动画
+    @State private var swipeOutOffset: CGSize = .zero
+    @State private var swipeOutOpacity: Double = 1
+    @State private var isMarking = false
 
     // 媒体内容与信息
     @State private var image: UIImage?
@@ -33,6 +43,10 @@ struct PhotoDetailView: View {
     @State private var metaLine = ""
     @State private var locationLine = ""
     @State private var cameraLine = ""
+
+    // 收藏与评分
+    @State private var isFavorite = false
+    @State private var showRatingPanel = false
 
     init(assets: [AssetInfo], startId: String) {
         self.assets = assets
@@ -43,6 +57,7 @@ struct PhotoDetailView: View {
 
     private var current: AssetInfo { assets[min(max(index, 0), assets.count - 1)] }
     private var isZoomed: Bool { scale * pinchScale > 1.05 }
+    private var ratingStars: Int { ratings.ratings[current.id] ?? 0 }
 
     var body: some View {
         NavigationStack {
@@ -51,11 +66,13 @@ struct PhotoDetailView: View {
                 GeometryReader { proxy in
                     ZStack {
                         Color.black
-                        gestureArea
+                        mediaArea
                             .frame(width: proxy.size.width, height: proxy.size.height)
                         statusBadge
                     }
                 }
+                if showRatingPanel { ratingPanel }
+                bottomBar
             }
             .background(Color.black.ignoresSafeArea(edges: .bottom))
             .navigationBarTitleDisplayMode(.inline)
@@ -63,20 +80,136 @@ struct PhotoDetailView: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar { toolbarContent }
             .task(id: current.id) { loadCurrent() }
-            .confirmationDialog(
-                "移入垃圾箱？",
-                isPresented: $showDeleteConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("移入垃圾箱", role: .destructive) {
-                    CleanupService.moveToTrash([current], state: appState)
-                    move(direction)
-                }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("照片将打上删除标记并记录到垃圾箱（右上角显示红色标志），可在垃圾箱中恢复或真正删除。")
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.28)) { appeared = true }
             }
         }
+        .scaleEffect(appeared ? 1 : 0.94)
+        .opacity(appeared ? 1 : 0)
+    }
+
+    // MARK: - 工具栏（左上角返回 + 右上角三按钮）
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarLeading) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.title3.weight(.semibold))
+                    .foregroundColor(.white)
+            }
+            .accessibilityLabel("返回")
+        }
+        ToolbarItemGroup(placement: .navigationBarTrailing) {
+            NavigationLink {
+                TrashView()
+            } label: {
+                Image(systemName: "trash")
+                    .foregroundColor(.white)
+                    .overlay(alignment: .topTrailing) { countBadge(appState.trashIds.count) }
+            }
+            NavigationLink {
+                ProtectedView()
+            } label: {
+                Image(systemName: "hand.raised")
+                    .foregroundColor(.white)
+                    .overlay(alignment: .topTrailing) { countBadge(appState.protectedIds.count) }
+            }
+            NavigationLink {
+                SettingsView()
+            } label: {
+                Image(systemName: "gearshape")
+                    .foregroundColor(.white)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func countBadge(_ count: Int) -> some View {
+        if count > 0 {
+            Text("\(count)")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(.white)
+                .padding(3)
+                .background(Circle().fill(.red))
+                .offset(x: 8, y: -8)
+        }
+    }
+
+    // MARK: - 媒体内容（双指缩放 + 四向滑动 + 动画）
+
+    @ViewBuilder
+    private var mediaContent: some View {
+        if current.kind == .video {
+            if let player {
+                VideoPlayer(player: player)
+            } else {
+                ProgressView().tint(.white)
+            }
+        } else if let image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+        } else {
+            ProgressView().tint(.white)
+        }
+    }
+
+    /// 切换上一张/下一张时的方向性过渡
+    private var swipeTransition: AnyTransition {
+        switch direction {
+        case .forward:
+            return .asymmetric(
+                insertion: .move(edge: .trailing).combined(with: .opacity),
+                removal: .move(edge: .leading).combined(with: .opacity)
+            )
+        case .backward:
+            return .asymmetric(
+                insertion: .move(edge: .leading).combined(with: .opacity),
+                removal: .move(edge: .trailing).combined(with: .opacity)
+            )
+        }
+    }
+
+    private var mediaArea: some View {
+        mediaContent
+            .scaleEffect(scale * pinchScale)
+            .offset(CGSize(width: panOffset.width + dragOffset.width + swipeOutOffset.width,
+                           height: panOffset.height + dragOffset.height + swipeOutOffset.height))
+            .opacity(swipeOutOpacity)
+            .clipped()
+            .id(current.id)
+            .transition(swipeTransition)
+            .simultaneousGesture(
+                MagnificationGesture()
+                    .updating($pinchScale) { value, state, _ in state = value }
+                    .onEnded { value in
+                        scale = min(6, max(1, scale * value))
+                        if scale == 1 { panOffset = .zero }
+                    }
+            )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 15)
+                    .updating($dragOffset) { value, state, _ in
+                        if isZoomed { state = value.translation }
+                    }
+                    .onEnded { value in
+                        if isZoomed {
+                            panOffset = CGSize(width: panOffset.width + value.translation.width,
+                                               height: panOffset.height + value.translation.height)
+                        } else {
+                            handleSwipe(value)
+                        }
+                    }
+            )
+            .onTapGesture(count: 2) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    scale = scale > 1 ? 1 : 2
+                    panOffset = .zero
+                }
+            }
     }
 
     // MARK: - 顶部信息（4 行）
@@ -109,95 +242,68 @@ struct PhotoDetailView: View {
         .background(Color.black)
     }
 
-    // MARK: - 右上角三按钮
+    // MARK: - 底部：收藏 / 评分
 
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .navigationBarTrailing) {
-            NavigationLink {
-                TrashView()
+    private var bottomBar: some View {
+        HStack {
+            Button {
+                toggleFavorite()
             } label: {
-                Image(systemName: "trash")
-                    .overlay(alignment: .topTrailing) { countBadge(appState.trashIds.count) }
+                VStack(spacing: 3) {
+                    Image(systemName: isFavorite ? "heart.fill" : "heart")
+                        .font(.title3)
+                    Text(isFavorite ? "已收藏" : "收藏")
+                        .font(.caption2)
+                }
+                .foregroundColor(isFavorite ? .red : .white)
+                .frame(maxWidth: .infinity)
             }
-            NavigationLink {
-                ProtectedView()
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { showRatingPanel.toggle() }
             } label: {
-                Image(systemName: "hand.raised")
-                    .overlay(alignment: .topTrailing) { countBadge(appState.protectedIds.count) }
-            }
-            NavigationLink {
-                SettingsView()
-            } label: {
-                Image(systemName: "gearshape")
+                VStack(spacing: 3) {
+                    Image(systemName: "star.fill")
+                        .font(.title3)
+                    Text(ratingStars > 0 ? "\(ratingStars) 星" : "评分")
+                        .font(.caption2)
+                }
+                .foregroundColor(.yellow)
+                .frame(maxWidth: .infinity)
             }
         }
+        .padding(.vertical, 10)
+        .background(Color.black.opacity(0.65))
     }
 
-    @ViewBuilder
-    private func countBadge(_ count: Int) -> some View {
-        if count > 0 {
-            Text("\(count)")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(.white)
-                .padding(3)
-                .background(Circle().fill(.red))
-                .offset(x: 8, y: -8)
-        }
-    }
-
-    // MARK: - 媒体内容（双指缩放 + 四向滑动）
-
-    @ViewBuilder
-    private var content: some View {
-        if current.kind == .video {
-            if let player {
-                VideoPlayer(player: player)
-            } else {
-                ProgressView().tint(.white)
+    private var ratingPanel: some View {
+        HStack(spacing: 14) {
+            Text("评分")
+                .font(.subheadline)
+                .foregroundColor(.white.opacity(0.8))
+            ForEach(1...5, id: \.self) { stars in
+                Button {
+                    ratings.setRating(stars, for: current.id)
+                } label: {
+                    Image(systemName: ratingStars >= stars ? "star.fill" : "star")
+                        .font(.title3)
+                        .foregroundColor(.yellow)
+                        .scaleEffect(ratingStars == stars ? 1.2 : 1)
+                }
             }
-        } else if let image {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .scaleEffect(scale * pinchScale)
-                .offset(CGSize(width: panOffset.width + dragOffset.width,
-                               height: panOffset.height + dragOffset.height))
-                .clipped()
-        } else {
-            ProgressView().tint(.white)
-        }
-    }
-
-    private var gestureArea: some View {
-        content
-            .simultaneousGesture(
-                MagnificationGesture()
-                    .updating($pinchScale) { value, state, _ in state = value }
-                    .onEnded { value in
-                        scale = min(6, max(1, scale * value))
-                        if scale == 1 { panOffset = .zero }
-                    }
-            )
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 15)
-                    .updating($dragOffset) { value, state, _ in
-                        if isZoomed { state = value.translation }
-                    }
-                    .onEnded { value in
-                        if isZoomed {
-                            panOffset = CGSize(width: panOffset.width + value.translation.width,
-                                               height: panOffset.height + value.translation.height)
-                        } else {
-                            handleSwipe(value)
-                        }
-                    }
-            )
-            .onTapGesture(count: 2) {
-                scale = scale > 1 ? 1 : 2
-                panOffset = .zero
+            if ratingStars > 0 {
+                Button {
+                    ratings.removeRating(for: current.id)
+                } label: {
+                    Text("清除")
+                        .font(.footnote)
+                        .foregroundColor(.white.opacity(0.7))
+                }
             }
-            .clipped()
+        }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(Color.black.opacity(0.85))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     // MARK: - 标记角标（红色 X = 垃圾箱；绿色 ✓ = 免删除）
@@ -234,12 +340,39 @@ struct PhotoDetailView: View {
             move(w < 0 ? .forward : .backward)
         } else if abs(h) > 60 && abs(h) > abs(w) {
             if h < 0 {
-                // 上滑 = 移入垃圾箱（需确认）
-                showDeleteConfirm = true
+                // 上滑 = 直接移入垃圾箱（免确认），飞出动画
+                markWithAnimation(.trash)
             } else {
-                // 下滑 = 加入免删除
-                markProtected()
+                // 下滑 = 加入免删除，飞出动画
+                markWithAnimation(.protect)
             }
+        }
+    }
+
+    /// 标记（免确认）：当前照片飞出 → 应用标记 → 按浏览方向自动前进
+    private func markWithAnimation(_ kind: MarkKind) {
+        guard !isMarking else { return }
+        isMarking = true
+        let flyOut: CGSize = kind == .trash
+            ? CGSize(width: 0, height: -800)
+            : CGSize(width: 0, height: 800)
+        withAnimation(.easeIn(duration: 0.3)) {
+            swipeOutOffset = flyOut
+            swipeOutOpacity = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+            switch kind {
+            case .trash:
+                CleanupService.moveToTrash([current], state: appState)
+            case .protect:
+                if !appState.isProtected(current.id) {
+                    CleanupService.toggleProtected([current.id], state: appState)
+                }
+            }
+            swipeOutOffset = .zero
+            swipeOutOpacity = 1
+            isMarking = false
+            move(direction)
         }
     }
 
@@ -261,17 +394,17 @@ struct PhotoDetailView: View {
         direction = dir
         resetZoom()
         if let next = nextNavigableIndex(from: index, dir: dir) {
-            index = next
+            withAnimation(.easeInOut(duration: 0.3)) {
+                index = next
+            }
         } else {
             dismiss()
         }
     }
 
-    private func markProtected() {
-        if !appState.isProtected(current.id) {
-            CleanupService.toggleProtected([current.id], state: appState)
-        }
-        move(direction)
+    private func toggleFavorite() {
+        isFavorite.toggle()
+        service.setFavorite(isFavorite, id: current.id)
     }
 
     private func resetZoom() {
@@ -286,6 +419,7 @@ struct PhotoDetailView: View {
         image = nil
         player = nil
         resetZoom()
+        isFavorite = info.isFavorite
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy年M月d日 HH:mm"

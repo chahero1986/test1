@@ -42,12 +42,11 @@ final class LibraryStore: ObservableObject {
     }
 
     /// 应用筛选后的列表（供首页 / 相册等复用）
+    /// 注：已入垃圾箱的照片仍然显示（带红色 X 角标），由用户在垃圾箱中决定去留
     func filteredAssets(state: AppState, ratings: RatingService) -> [AssetInfo] {
-        let trashed = state.trashIds
         let members = albumMemberIds
         return sorted(
             assets
-                .filter { !trashed.contains($0.id) }
                 .filter {
                     FilterEvaluator.matches(
                         $0,
