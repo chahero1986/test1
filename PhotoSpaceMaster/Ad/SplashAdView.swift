@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// 开屏页：5 秒倒计时自动关闭 + 「跳过」按钮；广告加载失败直接进主界面。
+/// 开屏页：广告就绪则展示；倒计时由 App 层统一管理（与引导页共享 8 秒），
+/// 本视图只展示剩余秒数与「跳过」按钮；广告加载失败直接由用户跳过/倒计时结束进主界面。
 struct SplashAdView: View {
+    let remaining: Int          // 共享倒计时剩余秒数
     var onFinish: () -> Void
 
     @StateObject private var coordinator = SplashAdCoordinator()
-    @State private var remaining = 8
-    @State private var didFinish = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -30,9 +30,9 @@ struct SplashAdView: View {
             }
 
             Button {
-                finish()
+                onFinish()
             } label: {
-                Text("跳过 \(remaining)s")
+                Text(remaining > 0 ? "跳过 \(remaining)s" : "跳过")
                     .font(.footnote)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -42,21 +42,9 @@ struct SplashAdView: View {
             .padding(.top, 8)
         }
         .onAppear {
-            remaining = coordinator.countdownSeconds
-            coordinator.onFinish = { finish() }
+            coordinator.onFinish = { onFinish() }
             coordinator.load()
         }
-        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
-            guard !didFinish else { return }
-            if remaining > 0 { remaining -= 1 }
-            if remaining <= 0 { finish() }
-        }
-    }
-
-    private func finish() {
-        guard !didFinish else { return }
-        didFinish = true
-        onFinish()
     }
 }
 

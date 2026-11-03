@@ -4,6 +4,7 @@ import SwiftUI
 /// - LazyVGrid 自适应列 + 分页加载（每页 120 项）
 /// - 多选模式：长按进入，点击选中/取消
 /// - 底部操作栏由各页面通过闭包注入，保证交互一致
+/// - 支持按相邻同标题分组，并可注入富样式分组头（iOS 相册「日」视图风格）
 struct PhotoGridView<BottomBar: View>: View {
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 2)]
     private let pageSize = 120
@@ -13,8 +14,10 @@ struct PhotoGridView<BottomBar: View>: View {
     var makeMenu: ((AssetInfo) -> AnyView)? = nil
     /// 非多选状态下点击照片 → 打开大图查看器
     var onOpenAsset: ((AssetInfo) -> Void)? = nil
-    /// 分组标题：返回 nil 表示该项无标题；相邻同标题的项归为同一组，组顶部显示标题（如日期）
+    /// 分组依据：返回 nil 表示该项无标题；相邻同标题的项归为同一组
     var makeSectionTitle: ((AssetInfo) -> String?)? = nil
+    /// 富样式分组头：参数 = 标题、项目数、总字节数、组内第一个项目（用于取地点等）；为 nil 时用简单文字标题
+    var makeSectionHeader: ((String, Int, Int64, AssetInfo?) -> AnyView)? = nil
 
     @Binding var selection: Set<String>
     @Binding var isSelecting: Bool
@@ -31,6 +34,7 @@ struct PhotoGridView<BottomBar: View>: View {
         makeMenu: ((AssetInfo) -> AnyView)? = nil,
         onOpenAsset: ((AssetInfo) -> Void)? = nil,
         makeSectionTitle: ((AssetInfo) -> String?)? = nil,
+        makeSectionHeader: ((String, Int, Int64, AssetInfo?) -> AnyView)? = nil,
         @ViewBuilder bottomBar: @escaping () -> BottomBar
     ) {
         self.assets = assets
@@ -40,22 +44,26 @@ struct PhotoGridView<BottomBar: View>: View {
         self.makeMenu = makeMenu
         self.onOpenAsset = onOpenAsset
         self.makeSectionTitle = makeSectionTitle
+        self.makeSectionHeader = makeSectionHeader
         self.bottomBar = bottomBar
     }
 
     private var displayed: [AssetInfo] { Array(assets.prefix(visibleCount)) }
 
     /// 分组显示：相邻同标题的项归为一段（与 LazyVGrid 兼容的分段实现）
-    private struct AssetSection: Identifiable {
+    struct AssetSection: Identifiable {
         let key: String
         let title: String
+        let firstAsset: AssetInfo?
+        var count: Int
+        var totalBytes: Int64
         var assets: [AssetInfo]
         var id: String { key }
     }
 
     private var sections: [AssetSection] {
         guard let makeSectionTitle else {
-            return [AssetSection(key: "all", title: "", assets: displayed)]
+            return [AssetSection(key: "all", title: "", count: displayed.count, totalBytes: 0, firstAsset: displayed.first, assets: displayed)]
         }
         var result: [AssetSection] = []
         for info in displayed {
@@ -64,10 +72,16 @@ struct PhotoGridView<BottomBar: View>: View {
                 last.assets.append(info)
                 result[result.count - 1] = last
             } else {
-                result.append(AssetSection(key: "\(result.count)-\(title)", title: title, assets: [info]))
+                result.append(AssetSection(key: "\(result.count)-\(title)", title: title, count: 1, totalBytes: info.byteSize, firstAsset: info, assets: [info]))
             }
         }
-        return result
+        // 汇总每段数量与大小
+        return result.map { section in
+            var s = section
+            s.count = s.assets.count
+            s.totalBytes = s.assets.reduce(0) { $0 + $1.byteSize }
+            return s
+        }
     }
 
     var body: some View {
@@ -77,12 +91,7 @@ struct PhotoGridView<BottomBar: View>: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(sections) { section in
                             if !section.title.isEmpty {
-                                Text(section.title)
-                                    .font(.subheadline.weight(.semibold))
-                                    .padding(.horizontal, 12)
-                                    .padding(.top, 14)
-                                    .padding(.bottom, 6)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                sectionHeader(section)
                             }
                             gridCells(section.assets)
                         }
@@ -107,6 +116,21 @@ struct PhotoGridView<BottomBar: View>: View {
     }
 
     @ViewBuilder
+    private func sectionHeader(_ section: AssetSection) -> some View {
+        if let makeSectionHeader {
+            makeSectionHeader(section.title, section.count, section.totalBytes, section.firstAsset)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Text(section.title)
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
     private func gridCells(_ items: [AssetInfo]) -> some View {
         ForEach(items) { info in
             GridCellView(
@@ -120,7 +144,6 @@ struct PhotoGridView<BottomBar: View>: View {
                 },
                 menu: makeMenu?(info)
             )
-            .id(info.id)
             .onAppear {
                 onCellAppear?(info)
                 if info.id == displayed.last?.id, visibleCount < assets.count {
@@ -174,6 +197,7 @@ struct GridCellView: View {
             Rectangle().fill(Color(.systemGray5))
 
             if let image {
+                // 缩略图为正方形裁切（ThumbnailManager aspectFill），直接铺满即可，无需运行时缩放
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -208,25 +232,15 @@ struct GridCellView: View {
                 Rectangle().stroke(Color.accentColor, lineWidth: 2)
             }
         }
-        .overlay(alignment: .topTrailing) {
-            // 标记角标：红色 X = 已入垃圾箱；绿色 ✓ = 免删除（两者可同时标记，上下排列）
-            // 多选模式下隐藏，避免与选中圆圈重叠
+        .overlay {
+            // 标记覆盖：已入垃圾箱 = 半透明红色；免删除 = 半透明绿色（红优先）
+            // 多选模式下不显示，避免干扰选择
             if !isSelecting {
-                VStack(spacing: 3) {
-                    if appState.isTrashed(info.id) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.callout)
-                            .foregroundStyle(.white)
-                            .background(Circle().fill(.red))
-                    }
-                    if appState.isProtected(info.id) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(.white)
-                            .background(Circle().fill(.green))
-                    }
+                if appState.isTrashed(info.id) {
+                    Color.red.opacity(0.45).allowsHitTesting(false)
+                } else if appState.isProtected(info.id) {
+                    Color.green.opacity(0.45).allowsHitTesting(false)
                 }
-                .padding(4)
             }
         }
         .contentShape(Rectangle())
@@ -236,7 +250,7 @@ struct GridCellView: View {
             if let menu { menu }
         }
         .task(id: info.id) {
-            image = await ThumbnailManager.shared.thumbnail(for: info, side: 150)
+            image = await ThumbnailManager.shared.thumbnail(for: info, side: 140)
         }
     }
 

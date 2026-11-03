@@ -330,27 +330,14 @@ struct PhotoDetailView: View {
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
-    // MARK: - 标记角标（红色 X = 垃圾箱；绿色 ✓ = 免删除）
+    // MARK: - 标记覆盖（红色 = 垃圾箱；绿色 = 免删除，与网格一致）
 
     @ViewBuilder
     private var statusBadge: some View {
-        VStack {
-            HStack {
-                Spacer()
-                if appState.isTrashed(current.id) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 34))
-                        .foregroundStyle(.red)
-                        .background(Circle().fill(.white.opacity(0.85)))
-                } else if appState.isProtected(current.id) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 34))
-                        .foregroundStyle(.green)
-                        .background(Circle().fill(.white.opacity(0.85)))
-                }
-            }
-            .padding()
-            Spacer()
+        if appState.isTrashed(current.id) {
+            Color.red.opacity(0.25).allowsHitTesting(false)
+        } else if appState.isProtected(current.id) {
+            Color.green.opacity(0.25).allowsHitTesting(false)
         }
     }
 
@@ -496,14 +483,14 @@ struct PhotoDetailView: View {
         cameraLine = ""
 
         Task {
-            image = await ThumbnailManager.shared.thumbnail(for: info, side: 1200)
+            image = await ThumbnailManager.shared.largeImage(for: info, side: 1200)
         }
         // 幻灯片相邻照片预加载（视频显示黑底占位）
         Task {
             if index > 0 {
                 let neighbor = assets[index - 1]
                 if neighbor.kind != .video {
-                    prevImage = await ThumbnailManager.shared.thumbnail(for: neighbor, side: 700)
+                    prevImage = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
                 }
             }
         }
@@ -511,7 +498,7 @@ struct PhotoDetailView: View {
             if index < assets.count - 1 {
                 let neighbor = assets[index + 1]
                 if neighbor.kind != .video {
-                    nextImage = await ThumbnailManager.shared.thumbnail(for: neighbor, side: 700)
+                    nextImage = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
                 }
             }
         }
