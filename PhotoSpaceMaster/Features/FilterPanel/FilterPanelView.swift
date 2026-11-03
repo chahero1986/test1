@@ -43,6 +43,7 @@ struct FilterPanelView: View {
                     typeSection
                     albumSection
                     browseSection
+                    bookmarkSection
                     resetButton
                 }
                 .padding()
@@ -215,6 +216,32 @@ struct FilterPanelView: View {
                 Label("自动跳过免删除项目", systemImage: "forward.end")
             }
             Text("开启后，大图查看的上一张/下一张以及标记照片后的自动前进，都会跳过带免删除标志的照片")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - 定位书签（详情页设置书签，这里跳转）
+
+    private var bookmarkSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("定位")
+                .font(.headline)
+            Button {
+                appState.bookmarkJumpToken += 1
+                dismiss()
+            } label: {
+                Label(
+                    appState.settings.bookmarkAssetId.isEmpty ? "转到定位（未设置书签）" : "转到定位",
+                    systemImage: "location.magnifyingglass"
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+            }
+            .buttonStyle(.bordered)
+            .disabled(appState.settings.bookmarkAssetId.isEmpty)
+            Text("在照片详情页下方点「定位」插入书签，再点「转到定位」即可直接跳到该书签所在位置")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }

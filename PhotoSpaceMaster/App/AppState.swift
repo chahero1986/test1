@@ -73,17 +73,13 @@ final class SettingsStore: ObservableObject {
     @Published var sortOrder: SortOrder {
         didSet { ud.set(sortOrder.rawValue, forKey: "settings.sortOrder") }
     }
-    /// 定位到上次操作位置
-    @Published var resumeToLastPosition: Bool {
-        didSet { ud.set(resumeToLastPosition, forKey: "settings.resume") }
-    }
     /// 批量删除时自动排除免删除项目
     @Published var skipProtectedItems: Bool {
         didSet { ud.set(skipProtectedItems, forKey: "settings.skipProtected") }
     }
-    /// 最后浏览的 asset id（首页定位用）
-    @Published var lastViewedAssetId: String {
-        didSet { ud.set(lastViewedAssetId, forKey: "settings.lastViewedAssetId") }
+    /// 定位书签：在照片详情页设置，筛选面板「转到定位」跳转
+    @Published var bookmarkAssetId: String {
+        didSet { ud.set(bookmarkAssetId, forKey: "settings.bookmarkAssetId") }
     }
     /// 大视频 / 大图片阈值（MB）
     @Published var largeVideoThresholdMB: Int {
@@ -100,9 +96,8 @@ final class SettingsStore: ObservableObject {
     init() {
         theme = ThemeMode(rawValue: ud.string(forKey: "settings.theme") ?? "") ?? .auto
         sortOrder = SortOrder(rawValue: ud.string(forKey: "settings.sortOrder") ?? "") ?? .descending
-        resumeToLastPosition = ud.object(forKey: "settings.resume") as? Bool ?? true
         skipProtectedItems = ud.object(forKey: "settings.skipProtected") as? Bool ?? true
-        lastViewedAssetId = ud.string(forKey: "settings.lastViewedAssetId") ?? ""
+        bookmarkAssetId = ud.string(forKey: "settings.bookmarkAssetId") ?? ""
         largeVideoThresholdMB = ud.object(forKey: "stats.largeVideoMB") as? Int ?? 200
         largePhotoThresholdMB = ud.object(forKey: "stats.largePhotoMB") as? Int ?? 10
         homeLayout = HomeLayout(rawValue: ud.string(forKey: "settings.homeLayout") ?? "") ?? .byDate
@@ -112,9 +107,8 @@ final class SettingsStore: ObservableObject {
     func resetToDefaults() {
         theme = .auto
         sortOrder = .descending
-        resumeToLastPosition = true
         skipProtectedItems = true
-        lastViewedAssetId = ""
+        bookmarkAssetId = ""
         largeVideoThresholdMB = 200
         largePhotoThresholdMB = 10
         homeLayout = .byDate
@@ -143,6 +137,9 @@ final class AppState: ObservableObject {
 
     @Published var trashIds: Set<String> = []
     @Published var protectedIds: Set<String> = []
+
+    /// 「转到定位」请求计数器：筛选面板点击后 +1，首页监听后跳转到书签位置
+    @Published var bookmarkJumpToken = 0
 
     func isProtected(_ id: String) -> Bool { protectedIds.contains(id) }
     func isTrashed(_ id: String) -> Bool { trashIds.contains(id) }

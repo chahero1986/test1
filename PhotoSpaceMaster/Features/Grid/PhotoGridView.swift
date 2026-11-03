@@ -18,6 +18,9 @@ struct PhotoGridView<BottomBar: View>: View {
     var makeSectionTitle: ((AssetInfo) -> String?)? = nil
     /// 富样式分组头：参数 = 标题、项目数、总字节数、组内第一个项目（用于取地点等）；为 nil 时用简单文字标题
     var makeSectionHeader: ((String, Int, Int64, AssetInfo?) -> AnyView)? = nil
+    /// 跳转定位：配合 jumpToken 变化触发，滚动到该书签项目并自动扩充分页
+    var jumpToId: String? = nil
+    var jumpToken: Int = 0
 
     @Binding var selection: Set<String>
     @Binding var isSelecting: Bool
@@ -35,6 +38,8 @@ struct PhotoGridView<BottomBar: View>: View {
         onOpenAsset: ((AssetInfo) -> Void)? = nil,
         makeSectionTitle: ((AssetInfo) -> String?)? = nil,
         makeSectionHeader: ((String, Int, Int64, AssetInfo?) -> AnyView)? = nil,
+        jumpToId: String? = nil,
+        jumpToken: Int = 0,
         @ViewBuilder bottomBar: @escaping () -> BottomBar
     ) {
         self.assets = assets
@@ -45,6 +50,8 @@ struct PhotoGridView<BottomBar: View>: View {
         self.onOpenAsset = onOpenAsset
         self.makeSectionTitle = makeSectionTitle
         self.makeSectionHeader = makeSectionHeader
+        self.jumpToId = jumpToId
+        self.jumpToken = jumpToken
         self.bottomBar = bottomBar
     }
 
@@ -86,36 +93,55 @@ struct PhotoGridView<BottomBar: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                if makeSectionTitle != nil {
-                    // 分组显示：每组 = 一行日期分组头 + 该组的多列缩略图网格
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(sections) { section in
-                            if !section.title.isEmpty {
-                                sectionHeader(section)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    if makeSectionTitle != nil {
+                        // 分组显示：每组 = 一行日期分组头 + 该组的多列缩略图网格
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(sections) { section in
+                                if !section.title.isEmpty {
+                                    sectionHeader(section)
+                                }
+                                LazyVGrid(columns: columns, spacing: 2) {
+                                    gridCells(section.assets)
+                                }
+                                .padding(.horizontal, 2)
                             }
-                            LazyVGrid(columns: columns, spacing: 2) {
-                                gridCells(section.assets)
-                            }
-                            .padding(.horizontal, 2)
                         }
+                    } else {
+                        LazyVGrid(columns: columns, spacing: 2) {
+                            gridCells(displayed)
+                        }
+                        .padding(.horizontal, 2)
+                        .padding(.bottom, 12)
                     }
-                } else {
-                    LazyVGrid(columns: columns, spacing: 2) {
-                        gridCells(displayed)
-                    }
-                    .padding(.horizontal, 2)
-                    .padding(.bottom, 12)
-                }
 
-                if assets.isEmpty {
-                    emptyState
+                    if assets.isEmpty {
+                        emptyState
+                    }
+                }
+                .onChange(of: jumpToken) { _ in
+                    scrollToBookmark(proxy)
                 }
             }
             bottomBar()
         }
         .onChange(of: assets.first?.id) { _ in
             visibleCount = pageSize
+        }
+    }
+
+    /// 跳转到定位书签：先扩充分页让目标行存在，再滚动
+    private func scrollToBookmark(_ proxy: ScrollViewProxy) {
+        guard let target = jumpToId else { return }
+        if let idx = assets.firstIndex(where: { $0.id == target }) {
+            visibleCount = max(visibleCount, min(assets.count, idx + 1))
+        }
+        // 等扩充分页后的行完成布局
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                proxy.scrollTo(target, anchor: .top)
+            }
         }
     }
 

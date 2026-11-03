@@ -177,7 +177,9 @@ struct PhotoDetailView: View {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
-                .animation(.easeOut(duration: 0.2), value: image)
+                // 注意：此处不加 .animation(value: image)——换页时必须瞬时换图，
+                // 否则新旧照片交叉淡化会形成「闪回上一张」的观感；
+                // 同一张照片 700px→1200px 的清晰度替换在 loadCurrent 里用 withAnimation 做
         } else {
             ZStack {
                 Color.black
@@ -347,6 +349,7 @@ struct PhotoDetailView: View {
                         .frame(maxWidth: .infinity)
                     }
                 }
+                bookmarkButton
                 Button {
                     toggleFavorite()
                 } label: {
@@ -375,6 +378,24 @@ struct PhotoDetailView: View {
         }
         .padding(.vertical, 10)
         .background(Color.black.opacity(0.65))
+    }
+
+    /// 定位书签：再次点击取消书签；设置后可在首页筛选面板「转到定位」跳转
+    private var isBookmarked: Bool { appState.settings.bookmarkAssetId == current.id }
+
+    private var bookmarkButton: some View {
+        Button {
+            appState.settings.bookmarkAssetId = isBookmarked ? "" : current.id
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+                    .font(.title3)
+                Text(isBookmarked ? "已定位" : "定位")
+                    .font(.caption2)
+            }
+            .foregroundColor(isBookmarked ? .orange : .white)
+            .frame(maxWidth: .infinity)
+        }
     }
 
     private var ratingPanel: some View {
@@ -459,10 +480,18 @@ struct PhotoDetailView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.23) {
             resetZoom()
             if let next = nextNavigableIndex(from: index, dir: dir) {
+                // 预载的邻图恰好就是目标照片时，随换页同步换图（无动画），
+                // 避免「先渲染旧图一帧再换图」造成的闪回上一张
+                let adjacent: UIImage? = {
+                    if dir == .forward, next == index + 1 { return nextImage }
+                    if dir == .backward, next == index - 1 { return prevImage }
+                    return nil
+                }()
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) {
                     index = next
+                    if let adjacent, assets[next].kind != .video { image = adjacent }
                     liveDrag = .zero
                 }
             } else {
@@ -480,14 +509,14 @@ struct PhotoDetailView: View {
         let tint: Color = (kind == .trash) ? .red : .green
         // 飞向右上角对应入口图标（垃圾箱 / 免打扰），带旋转与缩小
         let target = CGSize(width: size.width * 0.55, height: -size.height * 0.8)
-        withAnimation(.easeIn(duration: 0.22)) {
+        withAnimation(.easeIn(duration: 0.15)) {
             topTint = tint.opacity(0.6)
             markTint = tint.opacity(0.3)
             flyOffset = target
             flyRotation = 24
             swipeOutOpacity = 0.15
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.17) {
             switch kind {
             case .trash:
                 CleanupService.moveToTrash([current], state: appState)
@@ -527,10 +556,17 @@ struct PhotoDetailView: View {
         resetZoom()
         if let next = nextNavigableIndex(from: index, dir: dir) {
             // 标记飞出后无动画换页（当前照片已飞走，新照片直接就位）
+            // 同步换图：目标恰为相邻照片时用已预载的邻图，避免闪回上一张
+            let adjacent: UIImage? = {
+                if dir == .forward, next == index + 1 { return nextImage }
+                if dir == .backward, next == index - 1 { return prevImage }
+                return nil
+            }()
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {
                 index = next
+                if let adjacent, assets[next].kind != .video { image = adjacent }
             }
         } else {
             dismiss()
@@ -555,15 +591,10 @@ struct PhotoDetailView: View {
         resetZoom()
         isFavorite = info.isFavorite
 
-        // 消除切换闪烁：不清空画面，先用已预载的邻图（700px）占位——
-        // 它正是刚滑入的这张照片，高清图（1200px）加载完成后再无缝替换。
-        // 视频没有预载画面，直接显示加载占位。
+        // 图片：不清空画面——换页时已在 commitSlide/move 里同步换上预载邻图，
+        // 这里只等 1200px 高清图加载后做清晰度替换；视频等播放器就绪前显示占位。
         if info.kind == .video {
             image = nil
-        } else if direction == .backward {
-            image = prevImage
-        } else {
-            image = nextImage
         }
         prevImage = nil
         nextImage = nil
@@ -584,23 +615,27 @@ struct PhotoDetailView: View {
         cameraLine = ""
 
         Task {
-            image = await ThumbnailManager.shared.largeImage(for: info, side: 1200)
+            let img = await ThumbnailManager.shared.largeImage(for: info, side: 1200)
+            // 过期保护：快速连续滑动时只应用仍处于当前页的结果
+            guard current.id == info.id, let img else { return }
+            // 同一张照片的清晰度升级，交叉淡化替换
+            withAnimation(.easeOut(duration: 0.18)) { image = img }
         }
         // 幻灯片相邻照片预加载（视频显示黑底占位）
         Task {
-            if index > 0 {
-                let neighbor = assets[index - 1]
-                if neighbor.kind != .video {
-                    prevImage = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
-                }
+            guard index > 0, current.id == info.id else { return }
+            let neighbor = assets[index - 1]
+            if neighbor.kind != .video {
+                let img = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
+                if current.id == info.id { prevImage = img }
             }
         }
         Task {
-            if index < assets.count - 1 {
-                let neighbor = assets[index + 1]
-                if neighbor.kind != .video {
-                    nextImage = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
-                }
+            guard index < assets.count - 1, current.id == info.id else { return }
+            let neighbor = assets[index + 1]
+            if neighbor.kind != .video {
+                let img = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
+                if current.id == info.id { nextImage = img }
             }
         }
         Task {

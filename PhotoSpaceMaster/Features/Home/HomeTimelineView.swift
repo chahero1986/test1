@@ -12,8 +12,10 @@ struct HomeTimelineView: View {
     @State private var selection = Set<String>()
     @State private var showFilter = false
     @State private var viewingAsset: AssetInfo?
-    @State private var initialScrollDone = false
     @State private var dayGroups: [DayGroup] = []
+    // 定位书签跳转（配合 PhotoGridView 的 jumpToId / jumpToken）
+    @State private var jumpTargetId: String?
+    @State private var jumpToken = 0
 
     private struct DayGroup: Identifiable {
         let id: Date
@@ -54,23 +56,18 @@ struct HomeTimelineView: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            PhotoGridView(
-                assets: flatAssets,
-                selection: $selection,
-                isSelecting: $isSelecting,
-                makeMenu: { menu(for: $0) },
-                onOpenAsset: { info in
-                    // 「定位到上次操作位置」在打开照片时记录，避免滚动期间高频写入引发全局刷新
-                    if appState.settings.lastViewedAssetId != info.id {
-                        appState.settings.lastViewedAssetId = info.id
-                    }
-                    viewingAsset = info
-                },
-                makeSectionTitle: sectionTitle,
-                makeSectionHeader: dayHeader,
-                bottomBar: { homeBottomBar }
-            )
+        PhotoGridView(
+            assets: flatAssets,
+            selection: $selection,
+            isSelecting: $isSelecting,
+            makeMenu: { menu(for: $0) },
+            onOpenAsset: { viewingAsset = $0 },
+            makeSectionTitle: sectionTitle,
+            makeSectionHeader: dayHeader,
+            jumpToId: jumpTargetId,
+            jumpToken: jumpToken,
+            bottomBar: { homeBottomBar }
+        )
             .navigationTitle("相册空间大师")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -100,22 +97,18 @@ struct HomeTimelineView: View {
                     PhotoDetailView(assets: flatAssets, startId: asset.id)
                 }
             }
-            .onAppear {
-                rebuildGroups()
-                guard !initialScrollDone,
-                      appState.settings.resumeToLastPosition,
-                      !appState.settings.lastViewedAssetId.isEmpty else { return }
-                initialScrollDone = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    proxy.scrollTo(appState.settings.lastViewedAssetId, anchor: .top)
-                }
+            .onAppear(perform: rebuildGroups)
+            .onChange(of: appState.bookmarkJumpToken) { _ in
+                // 「转到定位」：跳到书签项目所在位置
+                guard !appState.settings.bookmarkAssetId.isEmpty else { return }
+                jumpTargetId = appState.settings.bookmarkAssetId
+                jumpToken += 1
             }
             .onChange(of: library.assets.count) { _ in rebuildGroups() }
             .onChange(of: appState.filter) { _ in rebuildGroups() }
             .onChange(of: appState.settings.sortOrder) { _ in rebuildGroups() }
             .onChange(of: appState.settings.homeLayout) { _ in rebuildGroups() }
             .onReceive(ratings.objectWillChange) { _ in rebuildGroups() }
-        }
     }
 
     // MARK: - 分组头（iOS 相册「日」视图风格：大字日期 + 星期 + 数量/大小 + 地点）

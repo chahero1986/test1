@@ -21,14 +21,11 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle(isOn: $appState.settings.resumeToLastPosition) {
-                    Label("定位到上次操作位置", systemImage: "location.magnifyingglass")
-                }
                 Toggle(isOn: $appState.settings.skipProtectedItems) {
                     Label("跳过免删除项目", systemImage: "hand.raised")
                 }
             } footer: {
-                Text("排序与首页显示方式已移至「筛选」面板中设置。开启「跳过免删除项目」后，批量删除会自动排除被标记为免删除的项目。")
+                Text("排序与首页显示方式已移至「筛选」面板中设置。开启「跳过免删除项目」后，批量删除会自动排除被标记为免删除的项目。定位浏览位置请使用详情页的「定位」书签 + 筛选面板的「转到定位」。")
             }
 
             Section {
