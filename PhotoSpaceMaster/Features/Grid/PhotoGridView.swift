@@ -88,12 +88,16 @@ struct PhotoGridView<BottomBar: View>: View {
         VStack(spacing: 0) {
             ScrollView {
                 if makeSectionTitle != nil {
+                    // 分组显示：每组 = 一行日期分组头 + 该组的多列缩略图网格
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(sections) { section in
                             if !section.title.isEmpty {
                                 sectionHeader(section)
                             }
-                            gridCells(section.assets)
+                            LazyVGrid(columns: columns, spacing: 2) {
+                                gridCells(section.assets)
+                            }
+                            .padding(.horizontal, 2)
                         }
                     }
                 } else {

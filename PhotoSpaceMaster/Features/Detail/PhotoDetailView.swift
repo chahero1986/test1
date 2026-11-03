@@ -5,7 +5,8 @@ import AVKit
 /// - 顶部信息：日期时间 / 类型·分辨率·大小 / 地点·海拔 / 相机参数
 /// - 左上角返回；右上角：垃圾箱（数量角标）、免删除（数量角标）、设置
 /// - 幻灯片式左右滑动：照片跟手移动，左右可见上一张/下一张，松手滑入切换
-/// - 上滑：照片变红飞出 = 移入垃圾箱（免确认）；下滑：照片变绿飞出 = 免删除
+/// - 上滑：屏幕顶端红色渐变，照片旋转飞入右上角垃圾箱 = 移入垃圾箱（免确认）
+/// - 下滑：屏幕顶端绿色渐变，照片旋转飞入右上角免打扰入口 = 免删除
 /// - 标记后按当前浏览方向自动前进；双指缩放；底部收藏 / 评分
 struct PhotoDetailView: View {
     /// forward = 下一张（新→旧）；backward = 上一张方向（旧→新）
@@ -34,10 +35,15 @@ struct PhotoDetailView: View {
     // 幻灯片滑动（未缩放时跟手）
     @State private var liveDrag: CGSize = .zero
 
-    // 标记动画（变色 + 飞出）
+    // 标记动画（变色 + 旋转飞出）
     @State private var markTint: Color?
     @State private var swipeOutOpacity: Double = 1
     @State private var isMarking = false
+    // 顶部渐变提示（上滑 = 红色，下滑 = 绿色，跟随拖动距离渐显）
+    @State private var topTint: Color?
+    // 旋转飞出（飞向右上角对应入口图标）
+    @State private var flyOffset: CGSize = .zero
+    @State private var flyRotation: Double = 0
 
     // 媒体内容与信息
     @State private var image: UIImage?
@@ -71,8 +77,9 @@ struct PhotoDetailView: View {
                 GeometryReader { proxy in
                     ZStack {
                         Color.black
-                        mediaArea(slideWidth: proxy.size.width)
+                        mediaArea(size: proxy.size)
                         statusBadge
+                        topGradient
                     }
                 }
                 if showRatingPanel { ratingPanel }
@@ -178,20 +185,34 @@ struct PhotoDetailView: View {
     private var currentMedia: some View {
         mediaContent
             .scaleEffect(scale * pinchScale)
-            .offset(CGSize(width: panOffset.width + dragOffset.width,
-                           height: panOffset.height + dragOffset.height))
+            .rotationEffect(.degrees(flyRotation))
+            .offset(CGSize(width: panOffset.width + dragOffset.width + flyOffset.width,
+                           height: panOffset.height + dragOffset.height + flyOffset.height))
             .overlay {
                 // 标记变色：红 = 垃圾箱，绿 = 免删除
                 if let markTint {
-                    markTint.opacity(0.4)
+                    markTint
                         .allowsHitTesting(false)
                 }
             }
             .clipped()
     }
 
-    private func mediaArea(slideWidth: CGFloat) -> some View {
-        ZStack {
+    /// 标记时屏幕顶端的颜色渐变（上滑 = 红色，下滑 = 绿色，见参考图）
+    @ViewBuilder
+    private var topGradient: some View {
+        if let topTint {
+            LinearGradient(colors: [topTint, topTint.opacity(0)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 240)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func mediaArea(size: CGSize) -> some View {
+        let slideWidth = size.width
+        return ZStack {
             slideNeighbor(prevImage)
                 .offset(x: -slideWidth)
             slideNeighbor(nextImage)
@@ -215,8 +236,19 @@ struct PhotoDetailView: View {
                 }
                 .onChanged { value in
                     if !isZoomed && !isMarking {
-                        // 幻灯片跟手：左右滑动可见上一张/下一张
-                        liveDrag = value.translation
+                        let w = value.translation.width
+                        let h = value.translation.height
+                        if abs(h) > abs(w) && abs(h) > 30 {
+                            // 垂直拖动：实时显示顶部渐变与变色反馈（不移动照片）
+                            liveDrag = .zero
+                            let c: Color = h < 0 ? .red : .green
+                            topTint = c.opacity(min(0.6, Double(abs(h)) / 600))
+                            markTint = c.opacity(min(0.3, Double(abs(h)) / 1600))
+                        } else {
+                            // 幻灯片跟手：左右滑动可见上一张/下一张
+                            liveDrag = value.translation
+                            clearMarkFeedback()
+                        }
                     }
                 }
                 .onEnded { value in
@@ -224,7 +256,7 @@ struct PhotoDetailView: View {
                         panOffset = CGSize(width: panOffset.width + value.translation.width,
                                            height: panOffset.height + value.translation.height)
                     } else {
-                        handleSwipe(value, slideWidth: slideWidth)
+                        handleSwipe(value, size: size)
                     }
                 }
         )
@@ -232,6 +264,16 @@ struct PhotoDetailView: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 scale = scale > 1 ? 1 : 2
                 panOffset = .zero
+            }
+        }
+    }
+
+    /// 清除拖动过程中的渐变/变色反馈
+    private func clearMarkFeedback() {
+        if topTint != nil || markTint != nil {
+            withAnimation(.easeOut(duration: 0.2)) {
+                topTint = nil
+                markTint = nil
             }
         }
     }
@@ -343,17 +385,18 @@ struct PhotoDetailView: View {
 
     // MARK: - 手势逻辑
 
-    private func handleSwipe(_ value: DragGesture.Value, slideWidth: CGFloat) {
+    private func handleSwipe(_ value: DragGesture.Value, size: CGSize) {
         let w = value.translation.width
         let h = value.translation.height
         if abs(w) > 60 && abs(w) > abs(h) * 1.2 {
             // 左滑 = 下一张，右滑 = 上一张（幻灯片滑入）
-            commitSlide(w < 0 ? .forward : .backward, width: slideWidth)
+            commitSlide(w < 0 ? .forward : .backward, width: size.width)
         } else if abs(h) > 60 && abs(h) > abs(w) {
-            // 上滑 = 变红飞入垃圾箱；下滑 = 变绿飞入免删除
-            commitMark(h < 0 ? .trash : .protect)
+            // 上滑 = 顶部红色渐变 + 旋转飞入垃圾箱；下滑 = 顶部绿色渐变 + 旋转飞入免打扰
+            commitMark(h < 0 ? .trash : .protect, size: size)
         } else {
             springBack()
+            clearMarkFeedback()
         }
     }
 
@@ -387,20 +430,22 @@ struct PhotoDetailView: View {
         }
     }
 
-    /// 标记（免确认）：照片变色 + 朝对应方向飞出 → 应用标记 → 按浏览方向自动前进
-    private func commitMark(_ kind: MarkKind) {
+    /// 标记（免确认）：顶部渐变提示，照片变色并旋转飞向右上角对应入口图标
+    /// （上滑 = 红色渐变，飞入垃圾箱；下滑 = 绿色渐变，飞入免打扰项目）→ 应用标记 → 按浏览方向自动前进
+    private func commitMark(_ kind: MarkKind, size: CGSize) {
         guard !isMarking else { return }
         isMarking = true
         let tint: Color = (kind == .trash) ? .red : .green
-        let fly: CGSize = (kind == .trash)
-            ? CGSize(width: 0, height: -900)    // 上滑变红飞入垃圾箱
-            : CGSize(width: 0, height: 900)     // 下滑变绿飞入免删除
-        withAnimation(.easeIn(duration: 0.3)) {
-            markTint = tint
-            liveDrag = fly
-            swipeOutOpacity = 0.35
+        // 飞向右上角对应入口图标（垃圾箱 / 免打扰），带旋转与缩小
+        let target = CGSize(width: size.width * 0.55, height: -size.height * 0.8)
+        withAnimation(.easeIn(duration: 0.35)) {
+            topTint = tint.opacity(0.6)
+            markTint = tint.opacity(0.3)
+            flyOffset = target
+            flyRotation = 24
+            swipeOutOpacity = 0.15
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.37) {
             switch kind {
             case .trash:
                 CleanupService.moveToTrash([current], state: appState)
@@ -409,8 +454,12 @@ struct PhotoDetailView: View {
                     CleanupService.toggleProtected([current.id], state: appState)
                 }
             }
-            markTint = nil
-            liveDrag = .zero
+            withAnimation(.easeOut(duration: 0.25)) {
+                topTint = nil
+                markTint = nil
+            }
+            flyOffset = .zero
+            flyRotation = 0
             swipeOutOpacity = 1
             isMarking = false
             move(direction)
