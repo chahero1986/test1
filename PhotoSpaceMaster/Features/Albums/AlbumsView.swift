@@ -39,6 +39,7 @@ struct AlbumsView: View {
             }
         }
         .navigationTitle("相册")
+        .toolbar { entryToolbarButtons }
         .onAppear(perform: reload)
         .onChange(of: library.authorizationStatus) { _ in reload() }
     }

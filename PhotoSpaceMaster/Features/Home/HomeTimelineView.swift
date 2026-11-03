@@ -79,6 +79,7 @@ struct HomeTimelineView: View {
                         showFilter = true
                     } label: {
                         Image(systemName: "line.3.horizontal.decrease.circle")
+                            .foregroundColor(.primary)
                             .overlay(alignment: .topTrailing) {
                                 if appState.filter.hasActiveConditions {
                                     Circle().fill(Color.accentColor).frame(width: 7, height: 7)
@@ -88,46 +89,9 @@ struct HomeTimelineView: View {
                     }
                     .accessibilityLabel("筛选")
 
-                    NavigationLink {
-                        TrashView()
-                    } label: {
-                        Image(systemName: "trash")
-                            .overlay(alignment: .topTrailing) {
-                                if appState.trashIds.count > 0 {
-                                    Text("\(appState.trashIds.count)")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .padding(3)
-                                        .background(Circle().fill(.red))
-                                        .offset(x: 8, y: -8)
-                                }
-                            }
-                    }
-                    .accessibilityLabel("垃圾箱")
-
-                    NavigationLink {
-                        ProtectedView()
-                    } label: {
-                        Image(systemName: "hand.raised")
-                            .overlay(alignment: .topTrailing) {
-                                if appState.protectedIds.count > 0 {
-                                    Text("\(appState.protectedIds.count)")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .padding(3)
-                                        .background(Circle().fill(.green))
-                                        .offset(x: 8, y: -8)
-                                }
-                            }
-                    }
-                    .accessibilityLabel("免删除项目")
-
-                    NavigationLink {
-                        SettingsView()
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .accessibilityLabel("设置")
+                    TrashEntryButton()
+                    ProtectedEntryButton()
+                    SettingsEntryButton()
                 }
             }
             .sheet(isPresented: $showFilter, onDismiss: { rebuildGroups() }) { FilterPanelView() }

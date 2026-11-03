@@ -69,6 +69,10 @@ struct PhotoDetailView: View {
     private var current: AssetInfo { assets[min(max(index, 0), assets.count - 1)] }
     private var isZoomed: Bool { scale * pinchScale > 1.05 }
     private var ratingStars: Int { ratings.ratings[current.id] ?? 0 }
+    /// 已入垃圾箱或免打扰的项目不允许上滑/下滑标记
+    private var canMark: Bool {
+        !appState.isTrashed(current.id) && !appState.isProtected(current.id)
+    }
 
     var body: some View {
         NavigationStack {
@@ -89,6 +93,7 @@ struct PhotoDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar { toolbarContent }
             .task(id: current.id) { loadCurrent() }
             .onAppear {
@@ -238,7 +243,7 @@ struct PhotoDetailView: View {
                     if !isZoomed && !isMarking {
                         let w = value.translation.width
                         let h = value.translation.height
-                        if abs(h) > abs(w) && abs(h) > 30 {
+                        if canMark && abs(h) > abs(w) && abs(h) > 30 {
                             // 垂直拖动：实时显示顶部渐变与变色反馈（不移动照片）
                             liveDrag = .zero
                             let c: Color = h < 0 ? .red : .green
@@ -308,33 +313,64 @@ struct PhotoDetailView: View {
         .background(Color.black)
     }
 
-    // MARK: - 底部：收藏 / 评分
+    // MARK: - 底部：取消删除 / 取消免打扰 / 收藏 / 评分
 
     private var bottomBar: some View {
         HStack {
-            Button {
-                toggleFavorite()
-            } label: {
-                VStack(spacing: 3) {
-                    Image(systemName: isFavorite ? "heart.fill" : "heart")
-                        .font(.title3)
-                    Text(isFavorite ? "已收藏" : "收藏")
-                        .font(.caption2)
+            if appState.isTrashed(current.id) {
+                // 已入垃圾箱：仅提供取消删除，且禁止上滑/下滑标记
+                Button {
+                    CleanupService.restore(ids: [current.id], state: appState)
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: "trash.slash")
+                            .font(.title3)
+                        Text("取消删除")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
                 }
-                .foregroundColor(isFavorite ? .red : .white)
-                .frame(maxWidth: .infinity)
-            }
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { showRatingPanel.toggle() }
-            } label: {
-                VStack(spacing: 3) {
-                    Image(systemName: "star.fill")
-                        .font(.title3)
-                    Text(ratingStars > 0 ? "\(ratingStars) 星" : "评分")
-                        .font(.caption2)
+            } else {
+                if appState.isProtected(current.id) {
+                    // 已免打扰：增加取消免打扰按钮，且禁止上滑/下滑标记
+                    Button {
+                        CleanupService.toggleProtected([current.id], state: appState)
+                    } label: {
+                        VStack(spacing: 3) {
+                            Image(systemName: "hand.raised.slash")
+                                .font(.title3)
+                            Text("取消免打扰")
+                                .font(.caption2)
+                        }
+                        .foregroundColor(.green)
+                        .frame(maxWidth: .infinity)
+                    }
                 }
-                .foregroundColor(.yellow)
-                .frame(maxWidth: .infinity)
+                Button {
+                    toggleFavorite()
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: isFavorite ? "heart.fill" : "heart")
+                            .font(.title3)
+                        Text(isFavorite ? "已收藏" : "收藏")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(isFavorite ? .red : .white)
+                    .frame(maxWidth: .infinity)
+                }
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showRatingPanel.toggle() }
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: "star.fill")
+                            .font(.title3)
+                        Text(ratingStars > 0 ? "\(ratingStars) 星" : "评分")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.yellow)
+                    .frame(maxWidth: .infinity)
+                }
             }
         }
         .padding(.vertical, 10)
@@ -392,8 +428,14 @@ struct PhotoDetailView: View {
             // 左滑 = 下一张，右滑 = 上一张（幻灯片滑入）
             commitSlide(w < 0 ? .forward : .backward, width: size.width)
         } else if abs(h) > 60 && abs(h) > abs(w) {
-            // 上滑 = 顶部红色渐变 + 旋转飞入垃圾箱；下滑 = 顶部绿色渐变 + 旋转飞入免打扰
-            commitMark(h < 0 ? .trash : .protect, size: size)
+            if canMark {
+                // 上滑 = 顶部红色渐变 + 旋转飞入垃圾箱；下滑 = 顶部绿色渐变 + 旋转飞入免打扰
+                commitMark(h < 0 ? .trash : .protect, size: size)
+            } else {
+                // 已入垃圾箱/免打扰的项目禁止上滑、下滑标记
+                springBack()
+                clearMarkFeedback()
+            }
         } else {
             springBack()
             clearMarkFeedback()
@@ -438,14 +480,14 @@ struct PhotoDetailView: View {
         let tint: Color = (kind == .trash) ? .red : .green
         // 飞向右上角对应入口图标（垃圾箱 / 免打扰），带旋转与缩小
         let target = CGSize(width: size.width * 0.55, height: -size.height * 0.8)
-        withAnimation(.easeIn(duration: 0.35)) {
+        withAnimation(.easeIn(duration: 0.22)) {
             topTint = tint.opacity(0.6)
             markTint = tint.opacity(0.3)
             flyOffset = target
             flyRotation = 24
             swipeOutOpacity = 0.15
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.37) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
             switch kind {
             case .trash:
                 CleanupService.moveToTrash([current], state: appState)
@@ -509,12 +551,22 @@ struct PhotoDetailView: View {
 
     private func loadCurrent() {
         let info = current
-        image = nil
-        prevImage = nil
-        nextImage = nil
         player = nil
         resetZoom()
         isFavorite = info.isFavorite
+
+        // 消除切换闪烁：不清空画面，先用已预载的邻图（700px）占位——
+        // 它正是刚滑入的这张照片，高清图（1200px）加载完成后再无缝替换。
+        // 视频没有预载画面，直接显示加载占位。
+        if info.kind == .video {
+            image = nil
+        } else if direction == .backward {
+            image = prevImage
+        } else {
+            image = nextImage
+        }
+        prevImage = nil
+        nextImage = nil
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy年M月d日 HH:mm"

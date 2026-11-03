@@ -18,6 +18,7 @@ struct StatsView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("清理和统计")
+        .toolbar { entryToolbarButtons }
         .onAppear { totals = StatsRecorder.totals() }
         .onDisappear { totals = StatsRecorder.totals() }
     }
