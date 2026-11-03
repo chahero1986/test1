@@ -155,6 +155,26 @@ struct PhotoDetailView: View {
         }
     }
 
+    /// 当前媒体内容：视频播放器或图片
+    @ViewBuilder
+    private var mediaContent: some View {
+        if current.kind == .video, let player {
+            VideoPlayer(player: player)
+                .ignoresSafeArea()
+        } else if let image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .animation(.easeOut(duration: 0.2), value: image)
+        } else {
+            ZStack {
+                Color.black
+                ProgressView()
+                    .tint(.white)
+            }
+        }
+    }
+
     private var currentMedia: some View {
         mediaContent
             .scaleEffect(scale * pinchScale)
