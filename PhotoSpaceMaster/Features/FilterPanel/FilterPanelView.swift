@@ -218,7 +218,13 @@ struct FilterPanelView: View {
             )) {
                 Label("自动跳过免删除项目", systemImage: "forward.end")
             }
-            Text("开启后，大图查看的上一张/下一张以及标记照片后的自动前进，都会跳过带免删除标志的照片")
+            Toggle(isOn: Binding(
+                get: { appState.settings.skipTrashedItems },
+                set: { appState.settings.skipTrashedItems = $0 }
+            )) {
+                Label("自动跳过已加入垃圾箱的项目", systemImage: "trash.slash")
+            }
+            Text("开启后，大图查看的上一张/下一张以及标记照片后的自动前进，都会跳过带免删除标志或已加入垃圾箱的照片")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }

@@ -1,10 +1,47 @@
 import CoreData
 import Foundation
+import Photos
+
+/// 真删进度与结果摘要（真删耗时长，避免界面"看起来卡死"）
+/// 注意：属性只在主线程读写（服务层在 MainActor、观察者经 Task { @MainActor } 回报）。
+final class DeletionProgress: ObservableObject {
+    @Published var isActive = false
+    @Published var deleted = 0
+    @Published var total = 0
+    /// 已统计过移除事件的资产 id，防止观察者重复计数
+    let counted = NSMutableSet()
+    /// 删除完成后的摘要；nil = 未显示
+    @Published var summary: DeletionSummary?
+}
+
+struct DeletionSummary {
+    let count: Int
+    let bytes: Int64
+    let cumulativeBytes: Int64
+
+    var bytesText: String {
+        ByteCountFormatter.string(fromByteCount: max(0, bytes), countStyle: .file)
+    }
+
+    /// 累计节省空间（GB 展示，不足 1 GB 时退回 MB）
+    var cumulativeText: String {
+        if cumulativeBytes >= 1_000_000_000 {
+            let formatter = ByteCountFormatter()
+            formatter.allowedUnits = [.useGB]
+            formatter.countStyle = .file
+            return formatter.string(fromByteCount: cumulativeBytes)
+        }
+        return ByteCountFormatter.string(fromByteCount: max(0, cumulativeBytes), countStyle: .file)
+    }
+}
 
 /// 清理操作唯一入口：移入垃圾箱 / 恢复 / 真删 / 免删除。
 /// 同步维护 TrashItem、ProtectedItem、CleanupRecord 与 AppState 内的内存集合。
 @MainActor
 enum CleanupService {
+
+    /// 真删进度（垃圾箱等页面观察此对象显示进度与摘要）；nonisolated 供 View 属性初始化访问
+    nonisolated static let deletionProgress = DeletionProgress()
 
     static var context: NSManagedObjectContext {
         PersistenceController.shared.container.viewContext
@@ -49,9 +86,18 @@ enum CleanupService {
 
     // MARK: - 真正删除（调用 PhotoKit，走系统「最近删除」）
 
-    /// - Parameter library: 传入后删除成功会立即重新加载相册元数据，首页/相册等页面即时更新
-    static func realDelete(ids: [String], state: AppState, library: LibraryStore? = nil) async throws {
-        try await PhotoLibraryService.shared.systemDelete(ids: ids)
+    /// - Parameter bytes: 本次删除项目的总字节数（用于完成摘要）
+    static func realDelete(ids: [String], state: AppState, library: LibraryStore? = nil, bytes: Int64 = 0) async throws {
+        // 显示"正在删除"进度（系统确认弹窗出现前就位，删除全程可见）
+        let progress = deletionProgress
+        progress.isActive = true
+        progress.summary = nil
+        progress.deleted = 0
+        progress.total = ids.count
+        progress.counted.removeAllObjects()
+        defer { progress.isActive = false }
+
+        try await PhotoLibraryService.shared.systemDelete(ids: ids, progress: progress)
         for id in ids {
             if let item = fetchTrashItem(id: id) { context.delete(item) }
             updateCleanupRecords(id: id, status: 1)
@@ -60,6 +106,13 @@ enum CleanupService {
         state.trashIds.subtract(ids)
         // 关键：重新加载相册，让已删除的照片从所有列表中消失
         library?.reload()
+
+        // 完成摘要：本次删除数 / 节省空间 / 累计节省空间
+        progress.summary = DeletionSummary(
+            count: ids.count,
+            bytes: bytes,
+            cumulativeBytes: StatsRecorder.totals().totalBytes
+        )
     }
 
     // MARK: - 免删除

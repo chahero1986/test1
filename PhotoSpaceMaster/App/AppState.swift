@@ -79,6 +79,14 @@ final class SettingsStore: ObservableObject {
     @Published var skipProtectedItems: Bool {
         didSet { ud.set(skipProtectedItems, forKey: "settings.skipProtected") }
     }
+    /// 浏览（大图上一张/下一张）时自动跳过已加入垃圾箱的项目
+    @Published var skipTrashedItems: Bool {
+        didSet { ud.set(skipTrashedItems, forKey: "settings.skipTrashed") }
+    }
+    /// 首页缩略图缩放（双指捏合调整，0.6...2.2，1 = 默认大小）
+    @Published var thumbnailScale: CGFloat {
+        didSet { ud.set(thumbnailScale, forKey: "settings.thumbnailScale") }
+    }
     /// 定位书签：在照片详情页设置，筛选面板「转到定位」跳转
     @Published var bookmarkAssetId: String {
         didSet { ud.set(bookmarkAssetId, forKey: "settings.bookmarkAssetId") }
@@ -99,6 +107,9 @@ final class SettingsStore: ObservableObject {
         theme = ThemeMode(rawValue: ud.string(forKey: "settings.theme") ?? "") ?? .auto
         sortOrder = SortOrder(rawValue: ud.string(forKey: "settings.sortOrder") ?? "") ?? .descending
         skipProtectedItems = ud.object(forKey: "settings.skipProtected") as? Bool ?? true
+        skipTrashedItems = ud.object(forKey: "settings.skipTrashed") as? Bool ?? true
+        let savedScale = ud.object(forKey: "settings.thumbnailScale") as? CGFloat ?? 1
+        thumbnailScale = min(2.2, max(0.6, savedScale))
         bookmarkAssetId = ud.string(forKey: "settings.bookmarkAssetId") ?? ""
         largeVideoThresholdMB = ud.object(forKey: "stats.largeVideoMB") as? Int ?? 200
         largePhotoThresholdMB = ud.object(forKey: "stats.largePhotoMB") as? Int ?? 10
@@ -110,6 +121,8 @@ final class SettingsStore: ObservableObject {
         theme = .auto
         sortOrder = .descending
         skipProtectedItems = true
+        skipTrashedItems = true
+        thumbnailScale = 1
         bookmarkAssetId = ""
         largeVideoThresholdMB = 200
         largePhotoThresholdMB = 10

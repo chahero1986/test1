@@ -13,6 +13,8 @@ struct HomeTimelineView: View {
     @State private var showFilter = false
     @State private var viewingAsset: AssetInfo?
     @State private var dayGroups: [DayGroup] = []
+    // 双指捏合调整缩略图大小的实时倍率（松手后持久化到设置）
+    @State private var livePinch: CGFloat = 1
     // 定位书签跳转（配合 PhotoGridView 的 jumpToId / jumpToken）
     @State private var jumpTargetId: String?
     @State private var jumpToken = 0
@@ -57,12 +59,23 @@ struct HomeTimelineView: View {
         }
     }
 
+    /// 缩略图基准最小边长（统一方块 = 原生相册式大方块）
+    private var baseCellMin: CGFloat {
+        appState.settings.homeLayout == .unified ? 124 : 104
+    }
+
+    /// 实际生效的最小边长 = 基准 × 持久化缩放 × 捏合实时倍率
+    private var effectiveCellMin: CGFloat {
+        let scale = appState.settings.thumbnailScale * livePinch
+        return baseCellMin * min(2.2, max(0.6, scale))
+    }
+
     var body: some View {
         PhotoGridView(
             assets: flatAssets,
             selection: $selection,
             isSelecting: $isSelecting,
-            fixedColumns: appState.settings.homeLayout == .unified ? 3 : nil,
+            cellMinSize: effectiveCellMin,
             makeMenu: { menu(for: $0) },
             onOpenAsset: {
                 lastOpenedId = $0.id
@@ -74,6 +87,16 @@ struct HomeTimelineView: View {
             jumpToken: jumpToken,
             bottomBar: { homeBottomBar }
         )
+            // 双指捏合调整缩略图大小（模仿苹果相册），松手后持久化
+            .simultaneousGesture(
+                MagnificationGesture()
+                    .onChanged { livePinch = $0 }
+                    .onEnded { value in
+                        let base = appState.settings.thumbnailScale
+                        appState.settings.thumbnailScale = min(2.2, max(0.6, base * value))
+                        livePinch = 1
+                    }
+            )
             .navigationTitle("相册空间大师")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -191,7 +214,7 @@ struct HomeTimelineView: View {
                 }
                 .disabled(selection.isEmpty)
             } else {
-                Text("\(flatAssets.count) 张照片 · 长按开始多选")
+                Text("\(flatAssets.count) 张照片 · 长按多选 · 双指捏合调整大小")
                     .font(.footnote)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

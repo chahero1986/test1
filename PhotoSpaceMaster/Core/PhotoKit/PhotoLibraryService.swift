@@ -174,9 +174,14 @@ final class PhotoLibraryService {
 
     // MARK: - 删除（走系统「最近删除」，30 天内可恢复）
 
-    func systemDelete(ids: [String]) async throws {
+    /// 批量删除（一次 performChanges 只弹一次系统确认框）。
+    /// 通过 PHPhotoLibraryChangeObserver 监听批次处理过程中逐个资产移除的变更，实时回报进度。
+    func systemDelete(ids: [String], progress: DeletionProgress? = nil) async throws {
         guard !ids.isEmpty, hasAccess else { return }
         let fetch = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+        let observer = DeletionChangeObserver(fetchResult: fetch, progress: progress)
+        PHPhotoLibrary.shared().register(observer)
+        defer { PHPhotoLibrary.shared().unregisterChangeObserver(observer) }
         try await PHPhotoLibrary.shared().performChanges {
             PHAssetChangeRequest.deleteAssets(fetch)
         }
@@ -190,6 +195,32 @@ final class PhotoLibraryService {
         guard let asset = fetch.firstObject else { return }
         PHPhotoLibrary.shared().performChanges {
             PHAssetChangeRequest(for: asset).isFavorite = favorite
+        }
+    }
+}
+
+/// 真删进度观察者：PhotoKit 在批次处理中会分多次广播变更，
+/// 每次的 removedObjectIDs 即刚处理完成的资产，据此实时更新「已删除 X / N」。
+final class DeletionChangeObserver: NSObject, PHPhotoLibraryChangeObserver {
+    private let fetchResult: PHFetchResult<PHAsset>
+    private weak var progress: DeletionProgress?
+
+    init(fetchResult: PHFetchResult<PHAsset>, progress: DeletionProgress?) {
+        self.fetchResult = fetchResult
+        self.progress = progress
+        super.init()
+    }
+
+    func photoLibraryDidChange(_ changeInstance: PHChange) {
+        guard let progress else { return }
+        guard let details = changeInstance.changeDetails(for: fetchResult) else { return }
+        let removedIds = (details.removedObjectIDs ?? []).map(\.localIdentifier)
+        guard !removedIds.isEmpty else { return }
+        Task { @MainActor in
+            for id in removedIds where progress.counted.contains(id) == false {
+                progress.counted.add(id)
+                progress.deleted += 1
+            }
         }
     }
 }

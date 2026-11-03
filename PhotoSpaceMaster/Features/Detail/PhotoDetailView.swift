@@ -540,12 +540,13 @@ struct PhotoDetailView: View {
     /// 浏览方向：默认新→旧；一旦操作过"上一张"（右滑），后续自动前进沿用旧→新
     private func nextNavigableIndex(from currentIndex: Int, dir: Direction) -> Int? {
         let skipProtected = appState.settings.skipProtectedItems
+        let skipTrashed = appState.settings.skipTrashedItems
         var i = currentIndex
         while true {
             i += (dir == .forward) ? 1 : -1
             guard assets.indices.contains(i) else { return nil }
             let candidate = assets[i]
-            if appState.isTrashed(candidate.id) { continue }
+            if skipTrashed && appState.isTrashed(candidate.id) { continue }
             if skipProtected && appState.isProtected(candidate.id) { continue }
             return i
         }

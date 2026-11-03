@@ -6,17 +6,15 @@ import SwiftUI
 /// - 底部操作栏由各页面通过闭包注入，保证交互一致
 /// - 支持按相邻同标题分组，并可注入富样式分组头（iOS 相册「日」视图风格）
 struct PhotoGridView<BottomBar: View>: View {
-    /// 列配置：fixedColumns 为 nil 时按最小宽度自适应；否则固定列数（原生相册式统一方块）
+    /// 列配置：按 cellMinSize 自适应列数（首页双指捏合可调整 cellMinSize 实现缩略图缩放）
     private var columns: [GridItem] {
-        if let fixedColumns {
-            return Array(repeating: GridItem(.flexible(), spacing: 2), count: fixedColumns)
-        }
-        return [GridItem(.adaptive(minimum: 104), spacing: 2)]
+        [GridItem(.adaptive(minimum: cellMinSize), spacing: 2)]
     }
     private let pageSize = 120
 
     let assets: [AssetInfo]
-    var fixedColumns: Int? = nil
+    /// 缩略图最小边长（决定列数）：双指捏合时可由外部调整
+    var cellMinSize: CGFloat = 104
     var onCellAppear: ((AssetInfo) -> Void)? = nil
     var makeMenu: ((AssetInfo) -> AnyView)? = nil
     /// 非多选状态下点击照片 → 打开大图查看器
@@ -40,7 +38,7 @@ struct PhotoGridView<BottomBar: View>: View {
         assets: [AssetInfo],
         selection: Binding<Set<String>>,
         isSelecting: Binding<Bool>,
-        fixedColumns: Int? = nil,
+        cellMinSize: CGFloat = 104,
         onCellAppear: ((AssetInfo) -> Void)? = nil,
         makeMenu: ((AssetInfo) -> AnyView)? = nil,
         onOpenAsset: ((AssetInfo) -> Void)? = nil,
@@ -53,7 +51,7 @@ struct PhotoGridView<BottomBar: View>: View {
         self.assets = assets
         self._selection = selection
         self._isSelecting = isSelecting
-        self.fixedColumns = fixedColumns
+        self.cellMinSize = cellMinSize
         self.onCellAppear = onCellAppear
         self.makeMenu = makeMenu
         self.onOpenAsset = onOpenAsset
@@ -140,7 +138,9 @@ struct PhotoGridView<BottomBar: View>: View {
         }
     }
 
-    /// 跳转到定位书签：先扩充分页让目标行存在，再滚动
+    /// 跳转到定位书签：先扩充分页让目标行存在，再滚动。
+    /// 分组模式下滚动到目标所在的分组头——目标单元格嵌在 LazyVStack+LazyVGrid
+    /// 双层懒加载容器内，直接 scrollTo 单元格不可靠；分组头在 LazyVStack 顶层，可靠。
     private func scrollToBookmark(_ proxy: ScrollViewProxy) {
         guard let target = jumpToId else { return }
         if let idx = assets.firstIndex(where: { $0.id == target }) {
@@ -148,8 +148,13 @@ struct PhotoGridView<BottomBar: View>: View {
         }
         // 等扩充分页后的行完成布局
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            var targetId = target
+            if makeSectionTitle != nil,
+               let section = sections.first(where: { $0.assets.contains { $0.id == target } }) {
+                targetId = section.key
+            }
             withAnimation(.easeInOut(duration: 0.3)) {
-                proxy.scrollTo(target, anchor: .top)
+                proxy.scrollTo(targetId, anchor: .top)
             }
         }
     }
@@ -171,9 +176,12 @@ struct PhotoGridView<BottomBar: View>: View {
 
     @ViewBuilder
     private func gridCells(_ items: [AssetInfo]) -> some View {
+        // 缩略图采样随单元格大小变化（捏合放大时提高清晰度），上限 480
+        let side = min(480, max(140, 140 * cellMinSize / 104))
         ForEach(items) { info in
             GridCellView(
                 info: info,
+                thumbSide: side,
                 isSelecting: isSelecting,
                 isSelected: selection.contains(info.id),
                 onTap: { handleTap(info) },
@@ -222,6 +230,8 @@ struct PhotoGridView<BottomBar: View>: View {
 
 struct GridCellView: View {
     let info: AssetInfo
+    /// 缩略图采样边长（随单元格缩放调整，保证放大后仍清晰）
+    var thumbSide: CGFloat = 140
     let isSelecting: Bool
     let isSelected: Bool
     var onTap: () -> Void
@@ -232,65 +242,67 @@ struct GridCellView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            Rectangle().fill(Color(.systemGray5))
-
-            if let image {
-                // 缩略图为正方形裁切（ThumbnailManager aspectFill），直接铺满即可，无需运行时缩放
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            }
-
-            HStack(spacing: 4) {
-                if info.kind == .video {
-                    Label(Self.durationText(info.durationSeconds), systemImage: "play.fill")
-                        .font(.caption2.weight(.medium))
-                }
-                if info.isLivePhoto {
-                    Image(systemName: "livephoto")
-                        .font(.caption2)
-                }
-                Spacer(minLength: 0)
-            }
-            .foregroundColor(.white)
-            .padding(4)
-
-            if isSelecting {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundColor(isSelected ? .accentColor : .white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(6)
-            }
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .clipped()
-        .overlay {
-            if isSelecting && isSelected {
-                Rectangle().stroke(Color.accentColor, lineWidth: 2)
-            }
-        }
-        .overlay {
-            // 标记覆盖：已入垃圾箱 = 半透明红色；免删除 = 半透明绿色（红优先）
-            // 多选模式下不显示，避免干扰选择
-            if !isSelecting {
-                if appState.isTrashed(info.id) {
-                    Color.red.opacity(0.45).allowsHitTesting(false)
-                } else if appState.isProtected(info.id) {
-                    Color.green.opacity(0.45).allowsHitTesting(false)
+        // 规范正方形单元格：Color.clear 定尺寸，图片 overlay 铺满后整体裁切
+        // （任何列配置下都保证苹果相册式正方形 + 自动裁切）
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                ZStack(alignment: .bottomLeading) {
+                    Color(.systemGray5)
+                    if let image {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    }
+                    HStack(spacing: 4) {
+                        if info.kind == .video {
+                            Label(Self.durationText(info.durationSeconds), systemImage: "play.fill")
+                                .font(.caption2.weight(.medium))
+                        }
+                        if info.isLivePhoto {
+                            Image(systemName: "livephoto")
+                                .font(.caption2)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundColor(.white)
+                    .padding(4)
                 }
             }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onTap)
-        .onLongPressGesture(minimumDuration: 0.35, perform: onLongPress)
-        .contextMenu {
-            if let menu { menu }
-        }
-        .task(id: info.id) {
-            image = await ThumbnailManager.shared.thumbnail(for: info, side: 140)
-        }
+            .overlay(alignment: .topTrailing) {
+                if isSelecting {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundColor(isSelected ? .accentColor : .white)
+                        .padding(6)
+                }
+            }
+            .overlay {
+                if isSelecting && isSelected {
+                    Rectangle().stroke(Color.accentColor, lineWidth: 2)
+                }
+            }
+            .overlay {
+                // 标记覆盖：已入垃圾箱 = 半透明红色；免删除 = 半透明绿色（红优先）
+                // 多选模式下不显示，避免干扰选择
+                if !isSelecting {
+                    if appState.isTrashed(info.id) {
+                        Color.red.opacity(0.45).allowsHitTesting(false)
+                    } else if appState.isProtected(info.id) {
+                        Color.green.opacity(0.45).allowsHitTesting(false)
+                    }
+                }
+            }
+            .clipped()
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
+            .onLongPressGesture(minimumDuration: 0.35, perform: onLongPress)
+            .contextMenu {
+                if let menu { menu }
+            }
+            .task(id: "\(info.id)|\(Int(thumbSide))") {
+                image = await ThumbnailManager.shared.thumbnail(for: info, side: thumbSide)
+            }
     }
 
     private static func durationText(_ seconds: Double) -> String {

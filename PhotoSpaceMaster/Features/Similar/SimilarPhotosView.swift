@@ -45,24 +45,27 @@ struct SimilarPhotosView: View {
     }
 
     private enum TypeChip: String, CaseIterable, Identifiable {
-        case photo, video, live
+        case photo, screenshot, video, live
         var id: String { rawValue }
         var title: String {
             switch self {
             case .photo: return "图片"
+            case .screenshot: return "截图"
             case .video: return "视频"
             case .live: return "Live"
             }
         }
     }
 
-    @State private var selectedTypes: Set<TypeChip> = [.photo, .video, .live]
+    @State private var selectedTypes: Set<TypeChip> = [.photo, .screenshot, .video, .live]
     @State private var selectedLevels: Set<SimLevel> = [.duplicate, .verySimilar, .similar]
     @State private var keepRule: KeepRule = .largest
     /// 标记删除的 asset id
     @State private var marked = Set<String>()
     @State private var groups: [[AssetInfo]] = []
     @State private var groupIndexById: [String: Int] = [:]
+    /// 当前已应用的批量选项（nil = 未选择；-1 = 全部组）；初始灰色，选择后变蓝
+    @State private var appliedBatch: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -97,6 +100,7 @@ struct SimilarPhotosView: View {
 
     private func typeMatches(_ info: AssetInfo) -> Bool {
         if info.kind == .video { return selectedTypes.contains(.video) }
+        if info.kind == .screenshot { return selectedTypes.contains(.screenshot) }
         if info.isLivePhoto { return selectedTypes.contains(.live) }
         return selectedTypes.contains(.photo)
     }
@@ -290,34 +294,16 @@ struct SimilarPhotosView: View {
                         .font(.footnote.weight(.medium))
                         .foregroundColor(.secondary)
                     ForEach([10, 20, 50, 100], id: \.self) { n in
-                        Button {
-                            autoSelectGroups(n)
-                        } label: {
-                            Text("\(n) 组")
-                                .font(.footnote.weight(.medium))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Capsule().fill(groups.count >= n ? Color.accentColor.opacity(0.15) : Color(.secondarySystemFill)))
-                                .foregroundColor(groups.count >= n ? .accentColor : .secondary)
-                        }
-                        .disabled(groups.count < n)
+                        batchButton(title: "\(n) 组", tag: n, enabled: groups.count >= n)
                     }
-                    Button {
-                        autoSelectGroups(nil)
-                    } label: {
-                        Text("全部组")
-                            .font(.footnote.weight(.medium))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                            .foregroundColor(.accentColor)
-                    }
+                    batchButton(title: "全部组", tag: -1, enabled: !groups.isEmpty)
                 }
                 .padding(.horizontal, 12)
             }
             HStack {
                 Button {
                     marked.removeAll()
+                    appliedBatch = nil
                 } label: {
                     Text("清除标记")
                         .font(.footnote)
@@ -340,6 +326,22 @@ struct SimilarPhotosView: View {
         .background(.bar)
     }
 
+    /// 批量按钮：初始灰色，点击应用后变为蓝色（当前应用项高亮）
+    private func batchButton(title: String, tag: Int, enabled: Bool) -> some View {
+        let isActive = appliedBatch == tag
+        return Button {
+            autoSelectGroups(tag == -1 ? nil : tag)
+        } label: {
+            Text(title)
+                .font(.footnote.weight(.medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(isActive ? Color.accentColor.opacity(0.15) : Color(.secondarySystemFill)))
+                .foregroundColor(isActive ? .accentColor : .secondary)
+        }
+        .disabled(!enabled)
+    }
+
     /// 对前 N 组（nil = 全部组）应用自动选择规则
     private func autoSelectGroups(_ count: Int?) {
         marked.removeAll()
@@ -347,6 +349,7 @@ struct SimilarPhotosView: View {
         for group in target {
             autoSelect(group)
         }
+        appliedBatch = (count == nil) ? -1 : count
     }
 
     private func moveToTrash() {
@@ -354,6 +357,7 @@ struct SimilarPhotosView: View {
         guard !targets.isEmpty else { return }
         CleanupService.moveToTrash(targets, state: appState)
         marked.removeAll()
+        appliedBatch = nil
         rebuildGroups()
     }
 }
