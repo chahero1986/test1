@@ -62,6 +62,7 @@ struct HomeTimelineView: View {
             assets: flatAssets,
             selection: $selection,
             isSelecting: $isSelecting,
+            fixedColumns: appState.settings.homeLayout == .unified ? 3 : nil,
             makeMenu: { menu(for: $0) },
             onOpenAsset: {
                 lastOpenedId = $0.id
@@ -77,6 +78,15 @@ struct HomeTimelineView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button {
+                        openBookmark()
+                    } label: {
+                        Image(systemName: "location.magnifyingglass")
+                            .foregroundColor(.primary)
+                    }
+                    .disabled(appState.settings.bookmarkAssetId.isEmpty)
+                    .accessibilityLabel("转到定位")
+
                     Button {
                         showFilter = true
                     } label: {
@@ -108,24 +118,28 @@ struct HomeTimelineView: View {
                 }
             }
             .onAppear(perform: rebuildGroups)
-            .onChange(of: appState.bookmarkJumpToken) { _ in
-                // 「转到定位」：直接打开书签照片；关闭查看器后会自动定位到它的网格位置
-                let bookmarkId = appState.settings.bookmarkAssetId
-                guard !bookmarkId.isEmpty else { return }
-                if let info = flatAssets.first(where: { $0.id == bookmarkId }) {
-                    lastOpenedId = info.id
-                    viewingAsset = info
-                } else {
-                    // 书签照片被筛选条件排除时，退回为网格定位
-                    jumpTargetId = bookmarkId
-                    jumpToken += 1
-                }
-            }
+            .onChange(of: appState.bookmarkJumpToken) { _ in openBookmark() }
             .onChange(of: library.assets.count) { _ in rebuildGroups() }
             .onChange(of: appState.filter) { _ in rebuildGroups() }
             .onChange(of: appState.settings.sortOrder) { _ in rebuildGroups() }
             .onChange(of: appState.settings.homeLayout) { _ in rebuildGroups() }
             .onReceive(ratings.objectWillChange) { _ in rebuildGroups() }
+    }
+
+    // MARK: - 转到定位
+
+    /// 打开书签照片；关闭查看器后会自动定位到它的网格位置。
+    /// 书签被筛选条件排除时退回为网格定位。
+    private func openBookmark() {
+        let bookmarkId = appState.settings.bookmarkAssetId
+        guard !bookmarkId.isEmpty else { return }
+        if let info = flatAssets.first(where: { $0.id == bookmarkId }) {
+            lastOpenedId = info.id
+            viewingAsset = info
+        } else {
+            jumpTargetId = bookmarkId
+            jumpToken += 1
+        }
     }
 
     // MARK: - 分组头（iOS 相册「日」视图风格：大字日期 + 星期 + 数量/大小 + 地点）

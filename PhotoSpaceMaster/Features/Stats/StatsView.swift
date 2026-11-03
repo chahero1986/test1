@@ -4,6 +4,7 @@ import SwiftUI
 struct StatsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var library: LibraryStore
+    @ObservedObject private var similarity = SimilarityStore.shared
 
     @State private var totals = CleanupTotals()
 
@@ -12,6 +13,7 @@ struct StatsView: View {
             VStack(spacing: 16) {
                 summaryCards
                 storageCard
+                similarCard
                 entriesCard
             }
             .padding()
@@ -19,7 +21,10 @@ struct StatsView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("清理和统计")
         .toolbar { entryToolbarButtons }
-        .onAppear { totals = StatsRecorder.totals() }
+        .onAppear {
+            totals = StatsRecorder.totals()
+            similarity.scanIfNeeded(assets: library.assets.filter { !appState.trashIds.contains($0.id) })
+        }
         .onDisappear { totals = StatsRecorder.totals() }
     }
 
@@ -89,6 +94,43 @@ struct StatsView: View {
         .padding()
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    // MARK: - 相似照片清理入口
+
+    private var similarCard: some View {
+        NavigationLink {
+            SimilarPhotosView()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "square.on.square.intersection")
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color.teal))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("相似照片清理").foregroundColor(.primary)
+                    Text(similarSubtitle).font(.caption).foregroundColor(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote)
+                    .foregroundColor(Color(.tertiaryLabel))
+            }
+            .padding()
+        }
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var similarSubtitle: String {
+        if similarity.phase == .scanning {
+            return "正在扫描… \(Int(similarity.progress * 100))%"
+        }
+        if let stats = similarity.stats, stats.extraCount > 0 {
+            let sizeText = ByteCountFormatter.string(fromByteCount: stats.freeBytes, countStyle: .file)
+            return "发现 \(stats.groups) 组相似/重复（\(stats.extraCount) 张）· 预计可释放 \(sizeText)"
+        }
+        return "点击扫描相似、重复照片"
     }
 
     // MARK: - 列表入口

@@ -6,10 +6,17 @@ import SwiftUI
 /// - 底部操作栏由各页面通过闭包注入，保证交互一致
 /// - 支持按相邻同标题分组，并可注入富样式分组头（iOS 相册「日」视图风格）
 struct PhotoGridView<BottomBar: View>: View {
-    private let columns = [GridItem(.adaptive(minimum: 104), spacing: 2)]
+    /// 列配置：fixedColumns 为 nil 时按最小宽度自适应；否则固定列数（原生相册式统一方块）
+    private var columns: [GridItem] {
+        if let fixedColumns {
+            return Array(repeating: GridItem(.flexible(), spacing: 2), count: fixedColumns)
+        }
+        return [GridItem(.adaptive(minimum: 104), spacing: 2)]
+    }
     private let pageSize = 120
 
     let assets: [AssetInfo]
+    var fixedColumns: Int? = nil
     var onCellAppear: ((AssetInfo) -> Void)? = nil
     var makeMenu: ((AssetInfo) -> AnyView)? = nil
     /// 非多选状态下点击照片 → 打开大图查看器
@@ -33,6 +40,7 @@ struct PhotoGridView<BottomBar: View>: View {
         assets: [AssetInfo],
         selection: Binding<Set<String>>,
         isSelecting: Binding<Bool>,
+        fixedColumns: Int? = nil,
         onCellAppear: ((AssetInfo) -> Void)? = nil,
         makeMenu: ((AssetInfo) -> AnyView)? = nil,
         onOpenAsset: ((AssetInfo) -> Void)? = nil,
@@ -45,6 +53,7 @@ struct PhotoGridView<BottomBar: View>: View {
         self.assets = assets
         self._selection = selection
         self._isSelecting = isSelecting
+        self.fixedColumns = fixedColumns
         self.onCellAppear = onCellAppear
         self.makeMenu = makeMenu
         self.onOpenAsset = onOpenAsset

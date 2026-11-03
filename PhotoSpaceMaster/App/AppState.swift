@@ -41,15 +41,16 @@ enum SortOrder: String, CaseIterable, Identifiable {
     var icon: String { self == .ascending ? "arrow.up" : "arrow.down" }
 }
 
-/// 首页显示方式：按日期分组（显示日期标题）/ 平铺显示
+/// 首页显示方式：按日期分组（显示日期标题）/ 平铺显示 / 统一方块（原生相册式固定三列网格）
 enum HomeLayout: String, CaseIterable, Identifiable {
-    case byDate, flat
+    case byDate, flat, unified
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .byDate: return "按日期分组"
         case .flat: return "平铺显示"
+        case .unified: return "统一方块"
         }
     }
 
@@ -57,6 +58,7 @@ enum HomeLayout: String, CaseIterable, Identifiable {
         switch self {
         case .byDate: return "calendar"
         case .flat: return "square.grid.3x3"
+        case .unified: return "rectangle.grid.3x3"
         }
     }
 }

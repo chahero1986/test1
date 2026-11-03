@@ -43,7 +43,6 @@ struct FilterPanelView: View {
                     typeSection
                     albumSection
                     browseSection
-                    bookmarkSection
                     resetButton
                 }
                 .padding()
@@ -111,6 +110,10 @@ struct FilterPanelView: View {
             }
             if appState.settings.homeLayout == .byDate {
                 Text("按拍摄日期分组显示，每组顶部显示日期标题")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else if appState.settings.homeLayout == .unified {
+                Text("与系统相册一致的统一方块网格（固定三列），不显示日期标题")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -222,31 +225,7 @@ struct FilterPanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - 定位书签（详情页设置书签，这里跳转）
-
-    private var bookmarkSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("定位")
-                .font(.headline)
-            Button {
-                appState.bookmarkJumpToken += 1
-                dismiss()
-            } label: {
-                Label(
-                    appState.settings.bookmarkAssetId.isEmpty ? "转到定位（未设置书签）" : "转到定位",
-                    systemImage: "location.magnifyingglass"
-                )
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-            }
-            .buttonStyle(.bordered)
-            .disabled(appState.settings.bookmarkAssetId.isEmpty)
-            Text("在照片详情页下方点「定位」插入书签；点「转到定位」直接打开书签照片，关闭查看器后会自动回到该书签前后的网格位置")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
+    // MARK: - 重置
 
     private var resetButton: some View {
         Button {
