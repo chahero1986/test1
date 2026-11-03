@@ -20,16 +20,6 @@ struct SettingsView: View {
                 }
             }
 
-            Section("排序") {
-                Picker(selection: $appState.settings.sortOrder) {
-                    ForEach(SortOrder.allCases) { order in
-                        Label(order.title, systemImage: order.icon).tag(order)
-                    }
-                } label: {
-                    Label("时间线排序", systemImage: "arrow.up.arrow.down")
-                }
-            }
-
             Section {
                 Toggle(isOn: $appState.settings.resumeToLastPosition) {
                     Label("定位到上次操作位置", systemImage: "location.magnifyingglass")
@@ -38,7 +28,7 @@ struct SettingsView: View {
                     Label("跳过免删除项目", systemImage: "hand.raised")
                 }
             } footer: {
-                Text("开启「跳过免删除项目」后，首页 / 相册 / 清理列表的批量删除会自动排除被标记为免删除的项目；垃圾箱内的删除不受此开关影响。")
+                Text("排序与首页显示方式已移至「筛选」面板中设置。开启「跳过免删除项目」后，批量删除会自动排除被标记为免删除的项目。")
             }
 
             Section {

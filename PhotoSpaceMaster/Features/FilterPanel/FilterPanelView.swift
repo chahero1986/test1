@@ -36,6 +36,8 @@ struct FilterPanelView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     scopeSection
+                    sortSection
+                    layoutSection
                     markerSection
                     sourceSection
                     typeSection
@@ -69,6 +71,45 @@ struct FilterPanelView: View {
             )
             if appState.filter.hasActiveConditions {
                 Text("已启用其他条件，与「所有项目」取交集")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    // MARK: - 排序（正序 / 倒序，自设置迁入）
+
+    private var sortSection: some View {
+        section("排序") {
+            ForEach(SortOrder.allCases) { order in
+                FilterChip(
+                    title: order.title,
+                    icon: order.icon,
+                    isOn: Binding(
+                        get: { appState.settings.sortOrder == order },
+                        set: { if $0 { appState.settings.sortOrder = order } }
+                    )
+                )
+            }
+        }
+    }
+
+    // MARK: - 首页显示方式（按日期分组 / 平铺）
+
+    private var layoutSection: some View {
+        section("首页显示方式") {
+            ForEach(HomeLayout.allCases) { layout in
+                FilterChip(
+                    title: layout.title,
+                    icon: layout.icon,
+                    isOn: Binding(
+                        get: { appState.settings.homeLayout == layout },
+                        set: { if $0 { appState.settings.homeLayout = layout } }
+                    )
+                )
+            }
+            if appState.settings.homeLayout == .byDate {
+                Text("按拍摄日期分组显示，每组顶部显示日期标题")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

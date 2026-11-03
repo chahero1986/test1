@@ -4,7 +4,7 @@ import SwiftUI
 struct PhotoSpaceMasterApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var library = LibraryStore()
-    @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "onboarding.completed")
+    @State private var showOnboarding = true
     @State private var showSplash = false
 
     var body: some Scene {

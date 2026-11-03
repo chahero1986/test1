@@ -41,6 +41,26 @@ enum SortOrder: String, CaseIterable, Identifiable {
     var icon: String { self == .ascending ? "arrow.up" : "arrow.down" }
 }
 
+/// 首页显示方式：按日期分组（显示日期标题）/ 平铺显示
+enum HomeLayout: String, CaseIterable, Identifiable {
+    case byDate, flat
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .byDate: return "按日期分组"
+        case .flat: return "平铺显示"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .byDate: return "calendar"
+        case .flat: return "square.grid.3x3"
+        }
+    }
+}
+
 // MARK: - 设置（持久化到 UserDefaults）
 
 @MainActor
@@ -72,6 +92,10 @@ final class SettingsStore: ObservableObject {
     @Published var largePhotoThresholdMB: Int {
         didSet { ud.set(largePhotoThresholdMB, forKey: "stats.largePhotoMB") }
     }
+    /// 首页显示方式：按日期分组 / 平铺
+    @Published var homeLayout: HomeLayout {
+        didSet { ud.set(homeLayout.rawValue, forKey: "settings.homeLayout") }
+    }
 
     init() {
         theme = ThemeMode(rawValue: ud.string(forKey: "settings.theme") ?? "") ?? .auto
@@ -81,6 +105,7 @@ final class SettingsStore: ObservableObject {
         lastViewedAssetId = ud.string(forKey: "settings.lastViewedAssetId") ?? ""
         largeVideoThresholdMB = ud.object(forKey: "stats.largeVideoMB") as? Int ?? 200
         largePhotoThresholdMB = ud.object(forKey: "stats.largePhotoMB") as? Int ?? 10
+        homeLayout = HomeLayout(rawValue: ud.string(forKey: "settings.homeLayout") ?? "") ?? .byDate
     }
 
     /// 恢复默认设置（入口有二次确认）
@@ -92,6 +117,7 @@ final class SettingsStore: ObservableObject {
         lastViewedAssetId = ""
         largeVideoThresholdMB = 200
         largePhotoThresholdMB = 10
+        homeLayout = .byDate
     }
 }
 

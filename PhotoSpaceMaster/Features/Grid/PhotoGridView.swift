@@ -13,6 +13,8 @@ struct PhotoGridView<BottomBar: View>: View {
     var makeMenu: ((AssetInfo) -> AnyView)? = nil
     /// 非多选状态下点击照片 → 打开大图查看器
     var onOpenAsset: ((AssetInfo) -> Void)? = nil
+    /// 分组标题：返回 nil 表示该项无标题；相邻同标题的项归为同一组，组顶部显示标题（如日期）
+    var makeSectionTitle: ((AssetInfo) -> String?)? = nil
 
     @Binding var selection: Set<String>
     @Binding var isSelecting: Bool
@@ -28,6 +30,7 @@ struct PhotoGridView<BottomBar: View>: View {
         onCellAppear: ((AssetInfo) -> Void)? = nil,
         makeMenu: ((AssetInfo) -> AnyView)? = nil,
         onOpenAsset: ((AssetInfo) -> Void)? = nil,
+        makeSectionTitle: ((AssetInfo) -> String?)? = nil,
         @ViewBuilder bottomBar: @escaping () -> BottomBar
     ) {
         self.assets = assets
@@ -36,38 +39,61 @@ struct PhotoGridView<BottomBar: View>: View {
         self.onCellAppear = onCellAppear
         self.makeMenu = makeMenu
         self.onOpenAsset = onOpenAsset
+        self.makeSectionTitle = makeSectionTitle
         self.bottomBar = bottomBar
     }
 
     private var displayed: [AssetInfo] { Array(assets.prefix(visibleCount)) }
 
+    /// 分组显示：相邻同标题的项归为一段（与 LazyVGrid 兼容的分段实现）
+    private struct AssetSection: Identifiable {
+        let key: String
+        let title: String
+        var assets: [AssetInfo]
+        var id: String { key }
+    }
+
+    private var sections: [AssetSection] {
+        guard let makeSectionTitle else {
+            return [AssetSection(key: "all", title: "", assets: displayed)]
+        }
+        var result: [AssetSection] = []
+        for info in displayed {
+            let title = makeSectionTitle(info) ?? ""
+            if var last = result.last, last.title == title {
+                last.assets.append(info)
+                result[result.count - 1] = last
+            } else {
+                result.append(AssetSection(key: "\(result.count)-\(title)", title: title, assets: [info]))
+            }
+        }
+        return result
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 2) {
-                    ForEach(displayed) { info in
-                        GridCellView(
-                            info: info,
-                            isSelecting: isSelecting,
-                            isSelected: selection.contains(info.id),
-                            onTap: { handleTap(info) },
-                            onLongPress: {
-                                if !isSelecting { isSelecting = true }
-                                selection.insert(info.id)
-                            },
-                            menu: makeMenu?(info)
-                        )
-                        .id(info.id)
-                        .onAppear {
-                            onCellAppear?(info)
-                            if info.id == displayed.last?.id, visibleCount < assets.count {
-                                visibleCount += pageSize
+                if makeSectionTitle != nil {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(sections) { section in
+                            if !section.title.isEmpty {
+                                Text(section.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.top, 14)
+                                    .padding(.bottom, 6)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
+                            gridCells(section.assets)
                         }
                     }
+                } else {
+                    LazyVGrid(columns: columns, spacing: 2) {
+                        gridCells(displayed)
+                    }
+                    .padding(.horizontal, 2)
+                    .padding(.bottom, 12)
                 }
-                .padding(.horizontal, 2)
-                .padding(.bottom, 12)
 
                 if assets.isEmpty {
                     emptyState
@@ -77,6 +103,30 @@ struct PhotoGridView<BottomBar: View>: View {
         }
         .onChange(of: assets.first?.id) { _ in
             visibleCount = pageSize
+        }
+    }
+
+    @ViewBuilder
+    private func gridCells(_ items: [AssetInfo]) -> some View {
+        ForEach(items) { info in
+            GridCellView(
+                info: info,
+                isSelecting: isSelecting,
+                isSelected: selection.contains(info.id),
+                onTap: { handleTap(info) },
+                onLongPress: {
+                    if !isSelecting { isSelecting = true }
+                    selection.insert(info.id)
+                },
+                menu: makeMenu?(info)
+            )
+            .id(info.id)
+            .onAppear {
+                onCellAppear?(info)
+                if info.id == displayed.last?.id, visibleCount < assets.count {
+                    visibleCount += pageSize
+                }
+            }
         }
     }
 

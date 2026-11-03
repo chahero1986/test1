@@ -4,9 +4,9 @@ import AVKit
 /// 大图查看器
 /// - 顶部信息：日期时间 / 类型·分辨率·大小 / 地点·海拔 / 相机参数
 /// - 左上角返回；右上角：垃圾箱（数量角标）、免删除（数量角标）、设置
-/// - 双指缩放；左滑=下一张、右滑=上一张；上滑=直接移入垃圾箱（免确认）、下滑=免删除
-/// - 标记后飞出动画 + 按当前浏览方向自动前进；打开/切换均有过渡动画
-/// - 底部：收藏、评分（点开评星级）
+/// - 幻灯片式左右滑动：照片跟手移动，左右可见上一张/下一张，松手滑入切换
+/// - 上滑：照片变红飞出 = 移入垃圾箱（免确认）；下滑：照片变绿飞出 = 免删除
+/// - 标记后按当前浏览方向自动前进；双指缩放；底部收藏 / 评分
 struct PhotoDetailView: View {
     /// forward = 下一张（新→旧）；backward = 上一张方向（旧→新）
     enum Direction { case forward, backward }
@@ -31,13 +31,18 @@ struct PhotoDetailView: View {
     @State private var panOffset: CGSize = .zero
     @GestureState private var dragOffset: CGSize = .zero
 
-    // 标记飞出动画
-    @State private var swipeOutOffset: CGSize = .zero
+    // 幻灯片滑动（未缩放时跟手）
+    @State private var liveDrag: CGSize = .zero
+
+    // 标记动画（变色 + 飞出）
+    @State private var markTint: Color?
     @State private var swipeOutOpacity: Double = 1
     @State private var isMarking = false
 
     // 媒体内容与信息
     @State private var image: UIImage?
+    @State private var prevImage: UIImage?
+    @State private var nextImage: UIImage?
     @State private var player: AVPlayer?
     @State private var dateText = ""
     @State private var metaLine = ""
@@ -66,8 +71,7 @@ struct PhotoDetailView: View {
                 GeometryReader { proxy in
                     ZStack {
                         Color.black
-                        mediaArea
-                            .frame(width: proxy.size.width, height: proxy.size.height)
+                        mediaArea(slideWidth: proxy.size.width)
                         statusBadge
                     }
                 }
@@ -138,78 +142,78 @@ struct PhotoDetailView: View {
         }
     }
 
-    // MARK: - 媒体内容（双指缩放 + 四向滑动 + 动画）
+    // MARK: - 幻灯片式媒体区（上一张 | 当前 | 下一张）
 
     @ViewBuilder
-    private var mediaContent: some View {
-        if current.kind == .video {
-            if let player {
-                VideoPlayer(player: player)
-            } else {
-                ProgressView().tint(.white)
-            }
-        } else if let image {
+    private func slideNeighbor(_ image: UIImage?) -> some View {
+        if let image {
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
         } else {
-            ProgressView().tint(.white)
+            Color.black
         }
     }
 
-    /// 切换上一张/下一张时的方向性过渡
-    private var swipeTransition: AnyTransition {
-        switch direction {
-        case .forward:
-            return .asymmetric(
-                insertion: .move(edge: .trailing).combined(with: .opacity),
-                removal: .move(edge: .leading).combined(with: .opacity)
-            )
-        case .backward:
-            return .asymmetric(
-                insertion: .move(edge: .leading).combined(with: .opacity),
-                removal: .move(edge: .trailing).combined(with: .opacity)
-            )
-        }
-    }
-
-    private var mediaArea: some View {
+    private var currentMedia: some View {
         mediaContent
             .scaleEffect(scale * pinchScale)
-            .offset(CGSize(width: panOffset.width + dragOffset.width + swipeOutOffset.width,
-                           height: panOffset.height + dragOffset.height + swipeOutOffset.height))
-            .opacity(swipeOutOpacity)
-            .clipped()
-            .id(current.id)
-            .transition(swipeTransition)
-            .simultaneousGesture(
-                MagnificationGesture()
-                    .updating($pinchScale) { value, state, _ in state = value }
-                    .onEnded { value in
-                        scale = min(6, max(1, scale * value))
-                        if scale == 1 { panOffset = .zero }
-                    }
-            )
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 15)
-                    .updating($dragOffset) { value, state, _ in
-                        if isZoomed { state = value.translation }
-                    }
-                    .onEnded { value in
-                        if isZoomed {
-                            panOffset = CGSize(width: panOffset.width + value.translation.width,
-                                               height: panOffset.height + value.translation.height)
-                        } else {
-                            handleSwipe(value)
-                        }
-                    }
-            )
-            .onTapGesture(count: 2) {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    scale = scale > 1 ? 1 : 2
-                    panOffset = .zero
+            .offset(CGSize(width: panOffset.width + dragOffset.width,
+                           height: panOffset.height + dragOffset.height))
+            .overlay {
+                // 标记变色：红 = 垃圾箱，绿 = 免删除
+                if let markTint {
+                    markTint.opacity(0.4)
+                        .allowsHitTesting(false)
                 }
             }
+            .clipped()
+    }
+
+    private func mediaArea(slideWidth: CGFloat) -> some View {
+        ZStack {
+            slideNeighbor(prevImage)
+                .offset(x: -slideWidth)
+            slideNeighbor(nextImage)
+                .offset(x: slideWidth)
+            currentMedia
+        }
+        .offset(x: liveDrag.width, y: liveDrag.height)
+        .opacity(swipeOutOpacity)
+        .simultaneousGesture(
+            MagnificationGesture()
+                .updating($pinchScale) { value, state, _ in state = value }
+                .onEnded { value in
+                    scale = min(6, max(1, scale * value))
+                    if scale == 1 { panOffset = .zero }
+                }
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 15)
+                .updating($dragOffset) { value, state, _ in
+                    if isZoomed { state = value.translation }
+                }
+                .onChanged { value in
+                    if !isZoomed && !isMarking {
+                        // 幻灯片跟手：左右滑动可见上一张/下一张
+                        liveDrag = value.translation
+                    }
+                }
+                .onEnded { value in
+                    if isZoomed {
+                        panOffset = CGSize(width: panOffset.width + value.translation.width,
+                                           height: panOffset.height + value.translation.height)
+                    } else {
+                        handleSwipe(value, slideWidth: slideWidth)
+                    }
+                }
+        )
+        .onTapGesture(count: 2) {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                scale = scale > 1 ? 1 : 2
+                panOffset = .zero
+            }
+        }
     }
 
     // MARK: - 顶部信息（4 行）
@@ -330,35 +334,64 @@ struct PhotoDetailView: View {
         }
     }
 
-    // MARK: - 逻辑
+    // MARK: - 手势逻辑
 
-    private func handleSwipe(_ value: DragGesture.Value) {
+    private func handleSwipe(_ value: DragGesture.Value, slideWidth: CGFloat) {
         let w = value.translation.width
         let h = value.translation.height
         if abs(w) > 60 && abs(w) > abs(h) * 1.2 {
-            // 左滑 = 下一张，右滑 = 上一张
-            move(w < 0 ? .forward : .backward)
+            // 左滑 = 下一张，右滑 = 上一张（幻灯片滑入）
+            commitSlide(w < 0 ? .forward : .backward, width: slideWidth)
         } else if abs(h) > 60 && abs(h) > abs(w) {
-            if h < 0 {
-                // 上滑 = 直接移入垃圾箱（免确认），飞出动画
-                markWithAnimation(.trash)
+            // 上滑 = 变红飞入垃圾箱；下滑 = 变绿飞入免删除
+            commitMark(h < 0 ? .trash : .protect)
+        } else {
+            springBack()
+        }
+    }
+
+    private func springBack() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            liveDrag = .zero
+        }
+    }
+
+    /// 幻灯片切换：当前照片滑出屏幕，下一张/上一张滑入居中
+    private func commitSlide(_ dir: Direction, width: CGFloat) {
+        guard !isMarking else { return }
+        direction = dir
+        let target = (dir == .forward) ? -width : width
+        withAnimation(.easeOut(duration: 0.22)) {
+            liveDrag = CGSize(width: target, height: 0)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.23) {
+            resetZoom()
+            if let next = nextNavigableIndex(from: index, dir: dir) {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    index = next
+                    liveDrag = .zero
+                }
             } else {
-                // 下滑 = 加入免删除，飞出动画
-                markWithAnimation(.protect)
+                // 已到头，弹回
+                springBack()
             }
         }
     }
 
-    /// 标记（免确认）：当前照片飞出 → 应用标记 → 按浏览方向自动前进
-    private func markWithAnimation(_ kind: MarkKind) {
+    /// 标记（免确认）：照片变色 + 朝对应方向飞出 → 应用标记 → 按浏览方向自动前进
+    private func commitMark(_ kind: MarkKind) {
         guard !isMarking else { return }
         isMarking = true
-        let flyOut: CGSize = kind == .trash
-            ? CGSize(width: 0, height: -800)
-            : CGSize(width: 0, height: 800)
+        let tint: Color = (kind == .trash) ? .red : .green
+        let fly: CGSize = (kind == .trash)
+            ? CGSize(width: 0, height: -900)    // 上滑变红飞入垃圾箱
+            : CGSize(width: 0, height: 900)     // 下滑变绿飞入免删除
         withAnimation(.easeIn(duration: 0.3)) {
-            swipeOutOffset = flyOut
-            swipeOutOpacity = 0
+            markTint = tint
+            liveDrag = fly
+            swipeOutOpacity = 0.35
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
             switch kind {
@@ -369,7 +402,8 @@ struct PhotoDetailView: View {
                     CleanupService.toggleProtected([current.id], state: appState)
                 }
             }
-            swipeOutOffset = .zero
+            markTint = nil
+            liveDrag = .zero
             swipeOutOpacity = 1
             isMarking = false
             move(direction)
@@ -394,7 +428,10 @@ struct PhotoDetailView: View {
         direction = dir
         resetZoom()
         if let next = nextNavigableIndex(from: index, dir: dir) {
-            withAnimation(.easeInOut(duration: 0.3)) {
+            // 标记飞出后无动画换页（当前照片已飞走，新照片直接就位）
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
                 index = next
             }
         } else {
@@ -417,6 +454,8 @@ struct PhotoDetailView: View {
     private func loadCurrent() {
         let info = current
         image = nil
+        prevImage = nil
+        nextImage = nil
         player = nil
         resetZoom()
         isFavorite = info.isFavorite
@@ -438,6 +477,23 @@ struct PhotoDetailView: View {
 
         Task {
             image = await ThumbnailManager.shared.thumbnail(for: info, side: 1200)
+        }
+        // 幻灯片相邻照片预加载（视频显示黑底占位）
+        Task {
+            if index > 0 {
+                let neighbor = assets[index - 1]
+                if neighbor.kind != .video {
+                    prevImage = await ThumbnailManager.shared.thumbnail(for: neighbor, side: 700)
+                }
+            }
+        }
+        Task {
+            if index < assets.count - 1 {
+                let neighbor = assets[index + 1]
+                if neighbor.kind != .video {
+                    nextImage = await ThumbnailManager.shared.thumbnail(for: neighbor, side: 700)
+                }
+            }
         }
         Task {
             if let item = await AssetDetailProvider.shared.playerItem(for: info) {

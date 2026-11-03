@@ -34,7 +34,7 @@ struct TrashView: View {
             Button("删除", role: .destructive) {
                 Task {
                     do {
-                        try await CleanupService.realDelete(ids: deleteTargetIds, state: appState)
+                        try await CleanupService.realDelete(ids: deleteTargetIds, state: appState, library: library)
                         selection.removeAll()
                     } catch {
                         errorMessage = "删除失败：\(error.localizedDescription)"

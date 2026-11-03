@@ -49,7 +49,8 @@ enum CleanupService {
 
     // MARK: - 真正删除（调用 PhotoKit，走系统「最近删除」）
 
-    static func realDelete(ids: [String], state: AppState) async throws {
+    /// - Parameter library: 传入后删除成功会立即重新加载相册元数据，首页/相册等页面即时更新
+    static func realDelete(ids: [String], state: AppState, library: LibraryStore? = nil) async throws {
         try await PhotoLibraryService.shared.systemDelete(ids: ids)
         for id in ids {
             if let item = fetchTrashItem(id: id) { context.delete(item) }
@@ -57,6 +58,8 @@ enum CleanupService {
         }
         PersistenceController.save(context)
         state.trashIds.subtract(ids)
+        // 关键：重新加载相册，让已删除的照片从所有列表中消失
+        library?.reload()
     }
 
     // MARK: - 免删除

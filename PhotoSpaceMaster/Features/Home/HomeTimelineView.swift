@@ -54,6 +54,7 @@ struct HomeTimelineView: View {
                 },
                 makeMenu: { menu(for: $0) },
                 onOpenAsset: { viewingAsset = $0 },
+                makeSectionTitle: sectionTitle,
                 bottomBar: { homeBottomBar }
             )
             .navigationTitle("相册空间大师")
@@ -171,6 +172,15 @@ struct HomeTimelineView: View {
     }
 
     // MARK: - 单元格长按菜单（评分打星入口 + 免删除 + 移入垃圾箱）
+
+    /// 分组标题：按日期分组时返回日期文字；平铺显示时返回 nil
+    private var sectionTitle: ((AssetInfo) -> String?)? {
+        guard appState.settings.homeLayout == .byDate else { return nil }
+        return { info in
+            guard let date = info.creationDate else { return nil }
+            return Self.dateFormatter.string(from: Calendar.current.startOfDay(for: date))
+        }
+    }
 
     private func menu(for info: AssetInfo) -> AnyView {
         AnyView(
