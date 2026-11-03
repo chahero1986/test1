@@ -13,10 +13,19 @@ enum LargeItemsMode: String {
         }
     }
 
-    var thresholdMBKeyPath: WritableKeyPath<SettingsStore, Int> {
+    @MainActor
+    func thresholdMB(of settings: SettingsStore) -> Int {
         switch self {
-        case .largeVideo, .screenRecording: return \.largeVideoThresholdMB
-        case .largePhoto: return \.largePhotoThresholdMB
+        case .largeVideo, .screenRecording: return settings.largeVideoThresholdMB
+        case .largePhoto: return settings.largePhotoThresholdMB
+        }
+    }
+
+    @MainActor
+    func setThresholdMB(_ mb: Int, on settings: SettingsStore) {
+        switch self {
+        case .largeVideo, .screenRecording: settings.largeVideoThresholdMB = mb
+        case .largePhoto: settings.largePhotoThresholdMB = mb
         }
     }
 
@@ -41,7 +50,7 @@ struct LargeItemsView: View {
     @State private var viewingAsset: AssetInfo?
 
     private var items: [AssetInfo] {
-        let minBytes = Int64(appState.settings[keyPath: mode.thresholdMBKeyPath]) * 1024 * 1024
+        let minBytes = Int64(mode.thresholdMB(of: appState.settings)) * 1024 * 1024
         return library.assets
             .filter { !appState.trashIds.contains($0.id) }
             .filter { asset in
@@ -82,9 +91,9 @@ struct LargeItemsView: View {
         Menu {
             ForEach(mode.thresholdOptions, id: \.self) { mb in
                 Button {
-                    appState.settings[keyPath: mode.thresholdMBKeyPath] = mb
+                    mode.setThresholdMB(mb, on: appState.settings)
                 } label: {
-                    if appState.settings[keyPath: mode.thresholdMBKeyPath] == mb {
+                    if mode.thresholdMB(of: appState.settings) == mb {
                         Label("大于 \(mb) MB", systemImage: "checkmark")
                     } else {
                         Text("大于 \(mb) MB")
@@ -92,7 +101,7 @@ struct LargeItemsView: View {
                 }
             }
         } label: {
-            Label("≥\(appState.settings[keyPath: mode.thresholdMBKeyPath]) MB", systemImage: "slider.horizontal.3")
+            Label("≥\(mode.thresholdMB(of: appState.settings)) MB", systemImage: "slider.horizontal.3")
         }
     }
 
