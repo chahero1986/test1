@@ -68,7 +68,6 @@ struct SimilarPhotosView: View {
         VStack(spacing: 0) {
             filterBar
             content
-            bottomBar
         }
         .navigationTitle("相似照片清理")
         .navigationBarTitleDisplayMode(.inline)
@@ -199,23 +198,30 @@ struct SimilarPhotosView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            PhotoGridView(
-                assets: groups.flatMap { $0 },
-                selection: $marked,
-                isSelecting: .constant(true),
-                makeSectionTitle: { info in
-                    groupIndexById[info.id].map { "组\($0)" }
-                },
-                makeSectionHeader: { title, count, bytes, _ in
-                    let index = Int(title.dropFirst()) ?? 0
-                    guard groups.indices.contains(index) else {
-                        return AnyView(EmptyView())
-                    }
-                    return AnyView(groupHeader(groups[index], index: index, count: count, bytes: bytes))
-                },
-                bottomBar: { batchBar }
-            )
+            similarGrid
         }
+    }
+
+    /// 相似分组网格（独立属性，降低 body 的类型检查复杂度）
+    private var similarGrid: some View {
+        PhotoGridView(
+            assets: groups.flatMap { $0 },
+            selection: $marked,
+            isSelecting: .constant(true),
+            makeSectionTitle: { info in
+                groupIndexById[info.id].map { "组\($0)" }
+            },
+            makeSectionHeader: { title, count, bytes, _ in
+                groupHeader(for: title, count: count, bytes: bytes)
+            },
+            bottomBar: { batchBar }
+        )
+    }
+
+    private func groupHeader(for title: String, count: Int, bytes: Int64) -> AnyView {
+        let index = Int(title.dropFirst()) ?? 0
+        guard groups.indices.contains(index) else { return AnyView(EmptyView()) }
+        return AnyView(self.groupHeader(groups[index], index: index, count: count, bytes: bytes))
     }
 
     private func groupHeader(_ group: [AssetInfo], index: Int, count: Int, bytes: Int64) -> some View {

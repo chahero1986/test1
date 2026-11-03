@@ -31,6 +31,8 @@ final class SimilarityStore: ObservableObject {
 
     /// asset id → pHash
     private var hashes: [String: UInt64] = [:]
+    /// 最近一次扫描的候选资产（供分组与统计使用）
+    private var scannedAssets: [AssetInfo] = []
     private var scanTask: Task<Void, Never>?
 
     /// 需要时启动扫描（已在扫描中或哈希已覆盖全部资产则跳过）
@@ -38,7 +40,7 @@ final class SimilarityStore: ObservableObject {
         if phase == .scanning { return }
         if hashes.count >= assets.count && !assets.isEmpty {
             phase = .done
-            recomputeStats()
+            recomputeStats(assets: assets)
             return
         }
         phase = .scanning
@@ -91,13 +93,14 @@ final class SimilarityStore: ObservableObject {
         }
 
         phase = .done
-        recomputeStats()
+        recomputeStats(assets: assets)
     }
 
     /// 重新计算汇总统计（阈值 = 「比较像」，每组保留一张估算可释放空间）
-    func recomputeStats() {
+    func recomputeStats(assets: [AssetInfo]) {
         guard !hashes.isEmpty else { stats = nil; return }
-        let grouped = makeGroups(hashes: hashes, threshold: Self.similarThreshold)
+        scannedAssets = assets
+        let grouped = Self.makeGroups(hashes: hashes, threshold: Self.similarThreshold, candidates: assets)
         var extra = 0
         var bytes: Int64 = 0
         for group in grouped {
