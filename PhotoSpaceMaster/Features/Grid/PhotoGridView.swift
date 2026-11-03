@@ -63,7 +63,7 @@ struct PhotoGridView<BottomBar: View>: View {
 
     private var sections: [AssetSection] {
         guard let makeSectionTitle else {
-            return [AssetSection(key: "all", title: "", count: displayed.count, totalBytes: 0, firstAsset: displayed.first, assets: displayed)]
+            return [AssetSection(key: "all", title: "", firstAsset: displayed.first, count: displayed.count, totalBytes: 0, assets: displayed)]
         }
         var result: [AssetSection] = []
         for info in displayed {
@@ -72,7 +72,7 @@ struct PhotoGridView<BottomBar: View>: View {
                 last.assets.append(info)
                 result[result.count - 1] = last
             } else {
-                result.append(AssetSection(key: "\(result.count)-\(title)", title: title, count: 1, totalBytes: info.byteSize, firstAsset: info, assets: [info]))
+                result.append(AssetSection(key: "\(result.count)-\(title)", title: title, firstAsset: info, count: 1, totalBytes: info.byteSize, assets: [info]))
             }
         }
         // 汇总每段数量与大小
