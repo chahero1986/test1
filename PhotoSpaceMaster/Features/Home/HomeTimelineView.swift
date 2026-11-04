@@ -15,6 +15,10 @@ struct HomeTimelineView: View {
     @State private var dayGroups: [DayGroup] = []
     // 双指捏合调整缩略图大小的实时倍率（松手后持久化到设置）
     @State private var livePinch: CGFloat = 1
+    /// 是否正在双指缩放：缩放中网格按连续边长排版（跟手），松手后回到整齐网格
+    @State private var isPinching = false
+    /// 网格可用宽度（由 PhotoGridView 回传，松手吸附时用来算「正好铺满」的边长）
+    @State private var gridWidth: CGFloat = 0
     // 定位书签跳转（配合 PhotoGridView 的 jumpToId / jumpToken）
     @State private var jumpTargetId: String?
     @State private var jumpToken = 0
@@ -71,10 +75,27 @@ struct HomeTimelineView: View {
         appState.settings.homeLayout == .unified ? 124 : 104
     }
 
-    /// 实际生效的最小边长 = 基准 × 持久化缩放 × 捏合实时倍率
+    /// 缩放上限对应的边长：最大档 = 单列铺满（一张照片占满整行），
+    /// 是个「干净」档位，所以捏合到顶再往回捏不会有死区
+    private var maxCellSide: CGFloat {
+        gridWidth > 0 ? gridWidth : baseCellMin * 2.2
+    }
+
+    /// 实际生效的边长 = 基准 × 持久化缩放 × 捏合实时倍率（捏合过程中逐帧变化）
     private var effectiveCellMin: CGFloat {
         let scale = appState.settings.thumbnailScale * livePinch
-        return baseCellMin * min(2.2, max(0.6, scale))
+        return min(maxCellSide, max(baseCellMin * 0.6, baseCellMin * scale))
+    }
+
+    /// 松手吸附：把当前连续边长吸附到「该列数正好铺满容器」的边长再持久化。
+    /// 这一步只改几个点，但能让网格从「最后一列被裁一半」变回整齐排列。
+    private func commitPinch(_ value: CGFloat) {
+        let raw = min(maxCellSide,
+                      max(baseCellMin * 0.6, baseCellMin * appState.settings.thumbnailScale * value))
+        let side = gridWidth > 0 ? GridMetrics.snappedSide(raw, width: gridWidth) : raw
+        isPinching = false
+        livePinch = 1
+        appState.settings.thumbnailScale = min(4, max(0.6, side / baseCellMin))
     }
 
     var body: some View {
@@ -83,6 +104,8 @@ struct HomeTimelineView: View {
             selection: $selection,
             isSelecting: $isSelecting,
             cellMinSize: effectiveCellMin,
+            isLiveZooming: isPinching,
+            onWidthChange: { gridWidth = $0 },
             makeMenu: { menu(for: $0) },
             onOpenAsset: {
                 lastOpenedId = $0.id
@@ -95,14 +118,25 @@ struct HomeTimelineView: View {
             jumpToken: jumpToken,
             bottomBar: { homeBottomBar }
         )
-            // 双指捏合调整缩略图大小（模仿苹果相册），松手后持久化
+            // 双指捏合连续缩放（模仿苹果相册）：
+            // 捏合中按连续边长跟手，松手吸附到「正好铺满」的边长再持久化
             .simultaneousGesture(
                 MagnificationGesture()
-                    .onChanged { livePinch = $0 }
+                    .onChanged { value in
+                        if !isPinching {
+                            // 进入缩放前先把当前倍率归一到「正好铺满」的档位，
+                            // 保证跟手起点与静止画面完全一致，否则一上手会先跳一下
+                            if gridWidth > 0 {
+                                let clean = GridMetrics.snappedSide(baseCellMin * appState.settings.thumbnailScale,
+                                                                    width: gridWidth)
+                                appState.settings.thumbnailScale = min(4, max(0.6, clean / baseCellMin))
+                            }
+                            isPinching = true
+                        }
+                        livePinch = value
+                    }
                     .onEnded { value in
-                        let base = appState.settings.thumbnailScale
-                        appState.settings.thumbnailScale = min(2.2, max(0.6, base * value))
-                        livePinch = 1
+                        commitPinch(value)
                     }
             )
             .navigationTitle("相册空间大师")

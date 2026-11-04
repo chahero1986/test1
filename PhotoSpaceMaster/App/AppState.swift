@@ -108,7 +108,8 @@ final class SettingsStore: ObservableObject {
     @Published var skipTrashedItems: Bool {
         didSet { ud.set(skipTrashedItems, forKey: "settings.skipTrashed") }
     }
-    /// 首页缩略图缩放（双指捏合调整，0.6...2.2，1 = 默认大小）
+    /// 首页缩略图缩放（双指捏合调整，0.6...4.0，1 = 默认大小）。
+    /// 上限放宽到 4.0：最大档 = 单列铺满（一张照片占满整行），与连续缩放衔接
     @Published var thumbnailScale: CGFloat {
         didSet { ud.set(thumbnailScale, forKey: "settings.thumbnailScale") }
     }
@@ -139,7 +140,7 @@ final class SettingsStore: ObservableObject {
         skipProtectedItems = ud.object(forKey: "settings.skipProtected") as? Bool ?? true
         skipTrashedItems = ud.object(forKey: "settings.skipTrashed") as? Bool ?? true
         let savedScale = ud.object(forKey: "settings.thumbnailScale") as? CGFloat ?? 1
-        thumbnailScale = min(2.2, max(0.6, savedScale))
+        thumbnailScale = min(4, max(0.6, savedScale))
         bookmarkAssetId = ud.string(forKey: "settings.bookmarkAssetId") ?? ""
         largeVideoThresholdMB = ud.object(forKey: "stats.largeVideoMB") as? Int ?? 200
         largePhotoThresholdMB = ud.object(forKey: "stats.largePhotoMB") as? Int ?? 10

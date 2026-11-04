@@ -1,20 +1,56 @@
 import SwiftUI
 
+/// 网格布局计算：列数与「正好铺满容器」的单元格边长互为反函数。
+/// 连续缩放（捏合跟手 + 松手吸附）依赖这两者保持一致。
+enum GridMetrics {
+    /// 单元格间距
+    static let spacing: CGFloat = 2
+
+    /// 目标边长下能放几列（至少 1 列）
+    static func columnCount(width: CGFloat, side: CGFloat) -> Int {
+        guard width > 0, side > 0 else { return 1 }
+        return max(1, Int((width + spacing) / (side + spacing)))
+    }
+
+    /// 该列数正好铺满容器时的单元格边长（在这条边长下列数恰好还是它）
+    static func filledSide(width: CGFloat, columns: Int) -> CGFloat {
+        guard width > 0, columns > 0 else { return 0 }
+        return max(1, (width - CGFloat(columns - 1) * spacing) / CGFloat(columns))
+    }
+
+    /// 捏合过程中的列数：允许最后一列只露出一部分。
+    /// 边长因此可以连续变化而不出现大片右侧留白——这是「丝滑」的关键。
+    static func overflowColumnCount(width: CGFloat, side: CGFloat) -> Int {
+        guard width > 0, side > 0 else { return 1 }
+        return max(1, Int(ceil((width + spacing) / (side + spacing))))
+    }
+
+    /// 静止态 / 松手吸附后的边长：保持当前列数，把格子铺满容器。
+    /// 与「按最小边长自适应列数」的旧行为完全一致（格子只会变得比目标略大）。
+    static func snappedSide(_ side: CGFloat, width: CGFloat) -> CGFloat {
+        guard width > 0, side > 0 else { return side }
+        let columns = columnCount(width: width, side: side)
+        return filledSide(width: width, columns: columns)
+    }
+}
+
 /// 共用网格组件：所有列表页（首页 / 相册 / 清理列表 / 垃圾箱 / 免删除）复用。
-/// - LazyVGrid 自适应列 + 分页加载（每页 120 项）
+/// - 行切片布局：每行一个 HStack，单元格边长可连续变化（捏合缩放跟手）
+/// - 分页加载（每页 120 项）
 /// - 多选模式：长按进入，点击选中/取消
 /// - 底部操作栏由各页面通过闭包注入，保证交互一致
 /// - 支持按相邻同标题分组，并可注入富样式分组头（iOS 相册「日」视图风格）
 struct PhotoGridView<BottomBar: View>: View {
-    /// 列配置：按 cellMinSize 自适应列数（首页双指捏合可调整 cellMinSize 实现缩略图缩放）
-    private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: cellMinSize), spacing: 2)]
-    }
     private let pageSize = 120
 
     let assets: [AssetInfo]
-    /// 缩略图最小边长（决定列数）：双指捏合时可由外部调整
+    /// 缩略图边长（决定列数）：双指捏合时由外部逐帧传入连续值
     var cellMinSize: CGFloat = 104
+    /// 是否正在捏合缩放。缩放中按连续边长排版（右侧可能留白），
+    /// 松手后按列数铺满，网格重新整齐——这是苹果相册的手感来源。
+    var isLiveZooming: Bool = false
+    /// 回传网格可用宽度（用于松手吸附计算「正好铺满」的边长）
+    var onWidthChange: ((CGFloat) -> Void)? = nil
     var onCellAppear: ((AssetInfo) -> Void)? = nil
     var makeMenu: ((AssetInfo) -> AnyView)? = nil
     /// 非多选状态下点击照片 → 打开大图查看器
@@ -41,6 +77,8 @@ struct PhotoGridView<BottomBar: View>: View {
         selection: Binding<Set<String>>,
         isSelecting: Binding<Bool>,
         cellMinSize: CGFloat = 104,
+        isLiveZooming: Bool = false,
+        onWidthChange: ((CGFloat) -> Void)? = nil,
         onCellAppear: ((AssetInfo) -> Void)? = nil,
         makeMenu: ((AssetInfo) -> AnyView)? = nil,
         onOpenAsset: ((AssetInfo) -> Void)? = nil,
@@ -54,6 +92,8 @@ struct PhotoGridView<BottomBar: View>: View {
         self._selection = selection
         self._isSelecting = isSelecting
         self.cellMinSize = cellMinSize
+        self.isLiveZooming = isLiveZooming
+        self.onWidthChange = onWidthChange
         self.onCellAppear = onCellAppear
         self.makeMenu = makeMenu
         self.onOpenAsset = onOpenAsset
@@ -66,7 +106,7 @@ struct PhotoGridView<BottomBar: View>: View {
 
     private var displayed: [AssetInfo] { Array(assets.prefix(visibleCount)) }
 
-    /// 分组显示：相邻同标题的项归为一段（与 LazyVGrid 兼容的分段实现）
+    /// 分组显示：相邻同标题的项归为一段
     struct AssetSection: Identifiable {
         let key: String
         let title: String
@@ -110,36 +150,17 @@ struct PhotoGridView<BottomBar: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    if makeSectionTitle != nil {
-                        // 分组显示：每组 = 一行日期分组头 + 该组的多列缩略图网格
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(sections) { section in
-                                if !section.title.isEmpty {
-                                    sectionHeader(section)
-                                }
-                                LazyVGrid(columns: columns, spacing: 2) {
-                                    gridCells(section.assets)
-                                }
-                                .padding(.horizontal, 2)
-                            }
-                        }
-                    } else {
-                        LazyVGrid(columns: columns, spacing: 2) {
-                            gridCells(displayed)
-                        }
-                        .padding(.horizontal, 2)
-                        .padding(.bottom, 12)
+            GeometryReader { geo in
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        gridContent(width: geo.size.width)
                     }
-
-                    if assets.isEmpty {
-                        emptyState
+                    .onChange(of: jumpToken) { _ in
+                        scrollToBookmark(proxy)
                     }
                 }
-                .onChange(of: jumpToken) { _ in
-                    scrollToBookmark(proxy)
-                }
+                .onAppear { reportWidth(geo.size.width) }
+                .onChange(of: geo.size.width) { width in reportWidth(width) }
             }
             bottomBar()
         }
@@ -148,9 +169,159 @@ struct PhotoGridView<BottomBar: View>: View {
         }
     }
 
+    /// 宽度回传（延后一拍，避免在视图更新期间改外部状态）
+    private func reportWidth(_ width: CGFloat) {
+        DispatchQueue.main.async { onWidthChange?(width) }
+    }
+
+    /// 当前排版：
+    /// - 捏合中：边长连续跟手；列数允许「半个列」，最后一列被视口裁掉一部分，永远铺满宽度
+    /// - 静止：按列数铺满容器（整齐），也是松手吸附的目标值，所以松手不会二次跳动
+    private func gridLayout(width: CGFloat) -> (side: CGFloat, columns: Int) {
+        guard width > 0 else { return (cellMinSize, 1) }
+        if isLiveZooming {
+            return (cellMinSize, GridMetrics.overflowColumnCount(width: width, side: cellMinSize))
+        }
+        let side = GridMetrics.snappedSide(cellMinSize, width: width)
+        return (side, GridMetrics.columnCount(width: width, side: side))
+    }
+
+    @ViewBuilder
+    private func gridContent(width: CGFloat) -> some View {
+        let layout = gridLayout(width: width)
+        let side = layout.side
+        let columns = layout.columns
+        if makeSectionTitle != nil {
+            // 分组显示：分组头与缩略图行拍平到同一个 LazyVStack（懒加载容器不能嵌套，
+            // 否则内层无法正确估算高度，滚动会出现空白/跳动）
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(blocks(columns: columns)) { block in
+                    switch block.kind {
+                    case .header(let section):
+                        sectionHeader(section)
+                    case .row(let row, let isFirstInSection):
+                        rowView(row, side: side,
+                                topPadding: isFirstInSection ? 0 : GridMetrics.spacing)
+                    }
+                }
+            }
+            // 固定为视口宽度：捏合时最后一列会超出，靠这里裁掉，避免撑宽滚动内容
+            .frame(width: width, alignment: .leading)
+            .clipped()
+        } else {
+            LazyVStack(spacing: GridMetrics.spacing) {
+                ForEach(Self.makeRows(displayed, columns: columns)) { row in
+                    rowView(row, side: side, topPadding: 0)
+                }
+            }
+            .padding(.bottom, 12)
+            .frame(width: width, alignment: .leading)
+            .clipped()
+        }
+
+        if assets.isEmpty {
+            emptyState
+        }
+    }
+
+    // MARK: - 行切片
+
+    /// 一行缩略图（行内单元格等宽等高，行数随列数变化）
+    struct GridRow: Identifiable {
+        let id: String
+        var items: [AssetInfo]
+    }
+
+    /// 分组头 / 缩略图行拍平后的块
+    struct GridBlock: Identifiable {
+        enum Kind {
+            case header(AssetSection)
+            case row(GridRow, isFirstInSection: Bool)
+        }
+        let id: String
+        let kind: Kind
+    }
+
+    private func blocks(columns: Int) -> [GridBlock] {
+        var result: [GridBlock] = []
+        result.reserveCapacity(sections.count + displayed.count / max(1, columns) + 1)
+        for section in sections {
+            if !section.title.isEmpty {
+                // 分组头用 section.key 作为滚动目标（与 scrollTargetId 对应）
+                result.append(GridBlock(id: section.key, kind: .header(section)))
+            }
+            for (offset, row) in Self.makeRows(section.assets, columns: columns).enumerated() {
+                result.append(GridBlock(id: row.id, kind: .row(row, isFirstInSection: offset == 0)))
+            }
+        }
+        return result
+    }
+
+    private static func makeRows(_ items: [AssetInfo], columns: Int) -> [GridRow] {
+        let cols = max(1, columns)
+        guard !items.isEmpty else { return [] }
+        var rows: [GridRow] = []
+        rows.reserveCapacity((items.count + cols - 1) / cols)
+        var index = 0
+        while index < items.count {
+            let end = min(index + cols, items.count)
+            let slice = Array(items[index..<end])
+            rows.append(GridRow(id: slice[0].id, items: slice))
+            index = end
+        }
+        return rows
+    }
+
+    private func rowView(_ row: GridRow, side: CGFloat, topPadding: CGFloat) -> some View {
+        // 捏合中行宽可能超过视口（最后一列只露出一部分），用固定行宽让右侧自然溢出裁剪；
+        // 静止态行宽 = 视口宽，恰好铺满
+        let rowWidth = CGFloat(row.items.count) * side
+            + CGFloat(max(0, row.items.count - 1)) * GridMetrics.spacing
+        return HStack(spacing: GridMetrics.spacing) {
+            ForEach(row.items) { info in
+                cellView(info, side: side)
+            }
+        }
+        .frame(width: rowWidth, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, topPadding)
+    }
+
+    /// 缩略图采样边长：按档位取整。捏合过程中单元格每帧都在变，
+    /// 若采样边长跟着每帧变，`.task(id:)` 会不断重启加载，缩放立刻卡住。
+    private static func sampleSide(for side: CGFloat) -> CGFloat {
+        if side <= 100 { return 160 }
+        if side <= 180 { return 240 }
+        if side <= 280 { return 360 }
+        return 480
+    }
+
+    @ViewBuilder
+    private func cellView(_ info: AssetInfo, side: CGFloat) -> some View {
+        GridCellView(
+            info: info,
+            thumbSide: Self.sampleSide(for: side),
+            isSelecting: isSelecting,
+            isSelected: selection.contains(info.id),
+            onTap: { handleTap(info) },
+            onLongPress: {
+                if !isSelecting { isSelecting = true }
+                selection.insert(info.id)
+            },
+            menu: makeMenu?(info)
+        )
+        .frame(width: side, height: side)
+        .onAppear {
+            onCellAppear?(info)
+            if info.id == displayed.last?.id, visibleCount < assets.count {
+                visibleCount += pageSize
+            }
+        }
+    }
+
     /// 跳转到定位书签：先扩充分页让目标行存在，再滚动。
-    /// 分组模式下滚动到目标所在的分组头——目标单元格嵌在 LazyVStack+LazyVGrid
-    /// 双层懒加载容器内，直接 scrollTo 单元格不可靠；分组头在 LazyVStack 顶层，可靠。
+    /// 分组模式下滚动到目标所在的分组头——目标单元格嵌在行切片的 HStack 里，
+    /// 直接 scrollTo 单元格不可靠；分组头是 LazyVStack 的顶层元素，可靠。
     ///
     /// 深跳转（如跳到几年前）时 LazyVStack 只有估算高度，单次 scrollTo 会停在估算位置，
     /// 表现为「第一次定位偏、再点一次才对」。这里改成：
@@ -214,31 +385,6 @@ struct PhotoGridView<BottomBar: View>: View {
     }
 
     @ViewBuilder
-    private func gridCells(_ items: [AssetInfo]) -> some View {
-        // 缩略图采样随单元格大小变化（捏合放大时提高清晰度），上限 480
-        let side = min(480, max(140, 140 * cellMinSize / 104))
-        ForEach(items) { info in
-            GridCellView(
-                info: info,
-                thumbSide: side,
-                isSelecting: isSelecting,
-                isSelected: selection.contains(info.id),
-                onTap: { handleTap(info) },
-                onLongPress: {
-                    if !isSelecting { isSelecting = true }
-                    selection.insert(info.id)
-                },
-                menu: makeMenu?(info)
-            )
-            .onAppear {
-                onCellAppear?(info)
-                if info.id == displayed.last?.id, visibleCount < assets.count {
-                    visibleCount += pageSize
-                }
-            }
-        }
-    }
-
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "photo.on.rectangle.angled")
