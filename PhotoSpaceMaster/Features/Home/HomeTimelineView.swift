@@ -18,8 +18,11 @@ struct HomeTimelineView: View {
     // 定位书签跳转（配合 PhotoGridView 的 jumpToId / jumpToken）
     @State private var jumpTargetId: String?
     @State private var jumpToken = 0
-    // 最近一次从网格打开的照片（关闭查看器后定位回它的位置）
+    // 最近一次从网格打开的照片（仅在「转到定位」打开书签后返回时用于定位）
     @State private var lastOpenedId: String?
+    /// 本次打开的查看器是否由「转到定位」触发：只有它才在关闭后回跳定位位置，
+    /// 普通点击浏览返回时保持网格原有滚动位置，不做任何跳转
+    @State private var jumpOnDismiss = false
 
     private struct DayGroup: Identifiable {
         let id: Date
@@ -79,6 +82,7 @@ struct HomeTimelineView: View {
             makeMenu: { menu(for: $0) },
             onOpenAsset: {
                 lastOpenedId = $0.id
+                jumpOnDismiss = false
                 viewingAsset = $0
             },
             makeSectionTitle: sectionTitle,
@@ -131,8 +135,10 @@ struct HomeTimelineView: View {
             }
             .sheet(isPresented: $showFilter, onDismiss: { rebuildGroups() }) { FilterPanelView() }
             .fullScreenCover(item: $viewingAsset, onDismiss: {
-                // 关闭查看器后，网格定位到刚看过的照片位置（含「转到定位」打开的书签照片）
-                guard let id = lastOpenedId else { return }
+                // 仅「转到定位」打开书签照片后返回时才定位到它的网格位置；
+                // 普通浏览返回不触发跳转，网格保持原有滚动位置
+                guard jumpOnDismiss, let id = lastOpenedId else { return }
+                jumpOnDismiss = false
                 jumpTargetId = id
                 jumpToken += 1
             }) { asset in
@@ -162,6 +168,7 @@ struct HomeTimelineView: View {
         guard !bookmarkId.isEmpty else { return }
         if let info = flatAssets.first(where: { $0.id == bookmarkId }) {
             lastOpenedId = info.id
+            jumpOnDismiss = true
             viewingAsset = info
         } else {
             jumpTargetId = bookmarkId

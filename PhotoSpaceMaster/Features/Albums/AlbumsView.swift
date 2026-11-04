@@ -5,6 +5,7 @@ import UIKit
 struct AlbumsView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var library: LibraryStore
+    @ObservedObject private var peopleStore = PeopleStore.shared
 
     @State private var smartAlbums: [AlbumSummary] = []
     @State private var userAlbums: [AlbumSummary] = []
@@ -14,6 +15,31 @@ struct AlbumsView: View {
 
     var body: some View {
         List {
+            Section("人物") {
+                NavigationLink {
+                    PeopleView()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "person.2.fill")
+                            .foregroundColor(.accentColor)
+                            .frame(width: 56, height: 56)
+                            .background(Color(.secondarySystemFill))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("人物")
+                            Text("本地人脸识别 · 按人物浏览与操作")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if peopleStore.phase == .done {
+                            Text("\(peopleStore.people.count)")
+                                .foregroundColor(.secondary)
+                                .font(.subheadline)
+                        }
+                    }
+                }
+            }
             Section("智能相簿") {
                 ForEach(smartAlbums) { album in
                     NavigationLink {

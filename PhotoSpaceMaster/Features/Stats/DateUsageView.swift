@@ -204,16 +204,18 @@ struct DateUsageView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
-    // MARK: - 列表（日期从新到旧）
+    // MARK: - 列表（按占用空间从大到小）
 
     private func listCard(_ items: [PeriodUsage]) -> some View {
-        let shown = Array(items.prefix(listLimit))
+        // 年 / 月 / 日粒度统一：列表按占用空间从大到小排列（柱状图仍按日期倒序展示趋势）
+        let sorted = items.sorted { $0.bytes > $1.bytes }
+        let shown = Array(sorted.prefix(listLimit))
         return VStack(spacing: 0) {
             HStack {
-                Text("按日期排序")
+                Text("按占用空间排序")
                     .font(.headline)
                 Spacer()
-                Text(granularity.unitTitle)
+                Text("从大到小 · \(granularity.unitTitle)")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
