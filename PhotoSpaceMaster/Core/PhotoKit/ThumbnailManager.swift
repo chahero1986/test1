@@ -30,29 +30,49 @@ final class ThumbnailManager {
         return asset
     }
 
-    /// 正方形裁切缩略图（网格用）
-    func thumbnail(for info: AssetInfo, side: CGFloat) async -> UIImage? {
+    /// 正方形裁切缩略图（网格用）：渐进式流 —— 缓存命中直接产出；
+    /// 未命中时先产出快速低清帧（秒出），随后产出高清帧并写入缓存。
+    func thumbnailStream(for info: AssetInfo, side: CGFloat) -> AsyncStream<UIImage> {
         let key = "sq-\(info.id)-\(Int(side))" as NSString
-        if let hit = cache.object(forKey: key) { return hit }
-        guard let asset = asset(for: info.id) else { return nil }
+        if let hit = cache.object(forKey: key) {
+            return AsyncStream { $0.yield(hit); $0.finish() }
+        }
+        guard let asset = asset(for: info.id) else {
+            return AsyncStream { $0.finish() }
+        }
 
         let options = PHImageRequestOptions()
         options.isNetworkAccessAllowed = true   // iCloud 图库按需取图
-        options.deliveryMode = .highQualityFormat
+        options.deliveryMode = .opportunistic   // 先给低清帧再给高清帧
         options.resizeMode = .fast
         // 网格缩略图 2x 采样足够清晰，显存/解码开销比 3x 低 44%
         let scale: CGFloat = 2
         let target = CGSize(width: side * scale, height: side * scale)
 
-        return await withCheckedContinuation { continuation in
-            manager.requestImage(for: asset, targetSize: target, contentMode: .aspectFill, options: options) { image, _ in
-                guard let image else { continuation.resume(returning: nil); return }
-                // 预解码只做一次：解码结果进缓存并直接返回（原实现解码两遍）
+        return AsyncStream { continuation in
+            manager.requestImage(for: asset, targetSize: target, contentMode: .aspectFill, options: options) { image, info in
+                guard let image else { return }
+                let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+                // 预解码：避免首次显示时在主线程解码造成掉帧（闪烁）；低清帧不进缓存
                 let decoded = image.preparingForDisplay() ?? image
-                self.cache.setObject(decoded, forKey: key)
-                continuation.resume(returning: decoded)
+                if !degraded {
+                    self.cache.setObject(decoded, forKey: key)
+                    continuation.yield(decoded)
+                    continuation.finish()
+                } else {
+                    continuation.yield(decoded)
+                }
             }
         }
+    }
+
+    /// 正方形裁切缩略图：等待最终高清帧（供相簿封面等非网格场景使用）
+    func thumbnail(for info: AssetInfo, side: CGFloat) async -> UIImage? {
+        var result: UIImage?
+        for await image in thumbnailStream(for: info, side: side) {
+            result = image
+        }
+        return result
     }
 
     /// 大图查看器用（非正方形裁切，按适配缩放）

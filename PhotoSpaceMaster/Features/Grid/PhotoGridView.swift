@@ -98,6 +98,12 @@ struct PhotoGridView<BottomBar: View>: View {
         }
     }
 
+    /// 资产列表签名：用于检测列表整体变化（筛选/排序/数据源切换）。
+    /// 原实现只看第一项 id——筛选后首项不变时分页不会重置。
+    private var assetsSignature: String {
+        "\(assets.count)|\(assets.first?.id ?? "")|\(assets.last?.id ?? "")"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
@@ -133,7 +139,7 @@ struct PhotoGridView<BottomBar: View>: View {
             }
             bottomBar()
         }
-        .onChange(of: assets.first?.id) { _ in
+        .onChange(of: assetsSignature) { _ in
             visibleCount = pageSize
         }
     }
@@ -301,7 +307,10 @@ struct GridCellView: View {
                 if let menu { menu }
             }
             .task(id: "\(info.id)|\(Int(thumbSide))") {
-                image = await ThumbnailManager.shared.thumbnail(for: info, side: thumbSide)
+                // 渐进式加载：先收到快速低清帧，高清帧到达后自动替换
+                for await frame in ThumbnailManager.shared.thumbnailStream(for: info, side: thumbSide) {
+                    image = frame
+                }
             }
     }
 
