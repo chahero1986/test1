@@ -148,8 +148,10 @@ struct HomeTimelineView: View {
             }
             .onAppear(perform: rebuildGroups)
             .onChange(of: appState.bookmarkJumpToken) { _ in openBookmark() }
-            // 从「按日期占用」等页面跳转过来：等分组重建后再定位到该日期
+            // 从「按日期占用」等页面跳转过来：先按最新数据重建分组，
+            // 再定位到目标周期（年/月/日 → 该周期内最新一张照片的分组位置）
             .onChange(of: appState.homeJumpToken) { _ in
+                rebuildGroups()
                 DispatchQueue.main.async { jumpToAppointedDate() }
             }
             .onChange(of: library.assets.count) { _ in rebuildGroups() }

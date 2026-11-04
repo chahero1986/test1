@@ -147,20 +147,23 @@ struct PhotoGridView<BottomBar: View>: View {
     /// 跳转到定位书签：先扩充分页让目标行存在，再滚动。
     /// 分组模式下滚动到目标所在的分组头——目标单元格嵌在 LazyVStack+LazyVGrid
     /// 双层懒加载容器内，直接 scrollTo 单元格不可靠；分组头在 LazyVStack 顶层，可靠。
+    /// 深跳转（如跳到几年前）时目标行布局需要较长时间，固定延时会滚到半路，
+    /// 因此按多次延时重试滚动：目标行就位后 scrollTo 收敛到正确位置。
     private func scrollToBookmark(_ proxy: ScrollViewProxy) {
         guard let target = jumpToId else { return }
         if let idx = assets.firstIndex(where: { $0.id == target }) {
             visibleCount = max(visibleCount, min(assets.count, idx + 1))
         }
-        // 等扩充分页后的行完成布局
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            var targetId = target
-            if makeSectionTitle != nil,
-               let section = sections.first(where: { $0.assets.contains { $0.id == target } }) {
-                targetId = section.key
-            }
-            withAnimation(.easeInOut(duration: 0.3)) {
-                proxy.scrollTo(targetId, anchor: .top)
+        for delay in [0.05, 0.3, 0.8, 1.5] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                var targetId = target
+                if makeSectionTitle != nil,
+                   let section = sections.first(where: { $0.assets.contains { $0.id == target } }) {
+                    targetId = section.key
+                }
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    proxy.scrollTo(targetId, anchor: .top)
+                }
             }
         }
     }

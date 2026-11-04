@@ -278,7 +278,8 @@ struct PhotoDetailView: View {
                         }
                         if dragAxis == .horizontal || (dragAxis == .vertical && !canMark) {
                             // 横向（或不可标记时的任意方向）：幻灯片跟手，左右滑动可见上一张/下一张
-                            liveDrag = value.translation
+                            // 纵向分量清零：左右滑动时照片只水平移动，不上下漂移
+                            liveDrag = CGSize(width: w, height: 0)
                             clearMarkFeedback()
                         } else if dragAxis == .vertical {
                             // 纵向：实时显示顶部渐变与变色反馈（不移动照片）
