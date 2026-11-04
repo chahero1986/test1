@@ -42,7 +42,7 @@ final class PeopleStore: ObservableObject {
 
     private var scanTask: Task<Void, Never>?
     /// person id → 头像（内存缓存）
-    private var faceImageCache: [Int: UIImage] = []
+    private var faceImageCache: [Int: UIImage] = [:]
 
     private static var persistenceURL: URL? {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)

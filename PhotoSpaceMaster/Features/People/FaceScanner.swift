@@ -35,8 +35,6 @@ enum FaceScanner {
         try? handler.perform([request])
         guard let observations = request.results else { return [] }
 
-        let w = CGFloat(cg.width)
-        let h = CGFloat(cg.height)
         return observations.compactMap { observation in
             let box = observation.boundingBox
             // 裁剪人脸区域后计算感知哈希（聚类依据）

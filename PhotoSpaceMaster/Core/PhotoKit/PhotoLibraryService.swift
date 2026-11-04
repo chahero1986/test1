@@ -217,7 +217,7 @@ final class DeletionChangeObserver: NSObject, PHPhotoLibraryChangeObserver {
     func photoLibraryDidChange(_ changeInstance: PHChange) {
         guard let progress else { return }
         guard let details = changeInstance.changeDetails(for: fetchResult) else { return }
-        let removedIds = (details.removedObjects ?? []).map(\.localIdentifier)
+        let removedIds = details.removedObjects.map(\.localIdentifier)
         guard !removedIds.isEmpty else { return }
         Task { @MainActor in
             for id in removedIds where progress.counted.contains(id) == false {
