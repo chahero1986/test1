@@ -11,6 +11,46 @@ final class LibraryStore: ObservableObject {
 
     private let service = PhotoLibraryService.shared
 
+    // MARK: - 本地快照缓存（解决冷启动首页空窗）
+
+    private struct LibraryCache: Codable {
+        var assets: [AssetInfo]
+        var albumMemberIds: Set<String>
+    }
+
+    private static var cacheURL: URL? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent("library_cache.json")
+    }
+
+    init() {
+        loadSnapshot()
+    }
+
+    /// 启动时先加载上次的元数据快照：首页立即可浏览，
+    /// 随后 reload() 在后台刷新并以最新数据覆盖（快照仅本机缓存，不涉及隐私上传）。
+    private func loadSnapshot() {
+        guard let url = Self.cacheURL,
+              let data = try? Data(contentsOf: url),
+              let cache = try? JSONDecoder().decode(LibraryCache.self, from: data),
+              !cache.assets.isEmpty
+        else { return }
+        assets = cache.assets
+        assetMap = Dictionary(cache.assets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        albumMemberIds = cache.albumMemberIds
+        // 有快照说明此前已授权；同步查询当前授权状态，避免权限页闪现
+        authorizationStatus = PHPhotoLibrary.authorizationStatus()
+    }
+
+    /// 写本地快照（nonisolated：仅文件操作，可在后台线程调用）
+    nonisolated private func writeSnapshot(assets: [AssetInfo], memberIds: Set<String>) {
+        guard let url = Self.cacheURL,
+              let data = try? JSONEncoder().encode(LibraryCache(assets: assets, albumMemberIds: memberIds))
+        else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
     func requestAccessAndReload() async {
         authorizationStatus = await service.requestAccess()
         guard service.hasAccess else { return }
@@ -30,6 +70,8 @@ final class LibraryStore: ObservableObject {
             let assets = service.fetchAllAssets(sortAscending: false)
             let assetMap = Dictionary(assets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             let memberIds = service.albumMemberIds()
+            // 刷新完成后更新本地快照，供下次冷启动秒开
+            self.writeSnapshot(assets: assets, memberIds: memberIds)
             await MainActor.run {
                 guard generation == self.reloadGeneration else { return }
                 self.assets = assets

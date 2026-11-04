@@ -196,13 +196,15 @@ final class AppState: ObservableObject {
     /// 「转到定位」请求计数器：筛选面板点击后 +1，首页监听后跳转到书签位置
     @Published var bookmarkJumpToken = 0
 
-    /// 「跳转到某天」请求：目标日期 + 计数器，首页监听后定位到该日期第一张照片
-    @Published var homeJumpDate: Date?
+    /// 「跳转到某周期」请求：目标周期区间 [start, end) + 计数器，首页监听后定位到该周期内的照片
+    @Published var homeJumpStart: Date?
+    @Published var homeJumpEnd: Date?
     @Published var homeJumpToken = 0
 
-    /// 从其他页面跳回首页并定位到指定日期
-    func jumpToHome(date: Date) {
-        homeJumpDate = date
+    /// 从其他页面跳回首页并定位到指定时间周期（年 / 月 / 日共用，end = 周期结束）
+    func jumpToHome(start: Date, end: Date) {
+        homeJumpStart = start
+        homeJumpEnd = end
         homeJumpToken += 1
         selectedTab = .home
     }

@@ -39,7 +39,7 @@ enum MediaKind: Int16, CaseIterable, Hashable {
 
 // MARK: - 资产轻量元数据
 
-struct AssetInfo: Identifiable, Hashable {
+struct AssetInfo: Identifiable, Hashable, Codable {
     let id: String                 // PHAsset.localIdentifier
     let kind: MediaKind
     let byteSize: Int64

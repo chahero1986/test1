@@ -178,20 +178,24 @@ struct HomeTimelineView: View {
 
     // MARK: - 跨页日期定位
 
-    /// 定位到指定日期的第一张照片；该日期没有照片时取相邻最近的一张（更早的优先）。
-    /// 复用 PhotoGridView 的 jumpToId / jumpToken 机制（分组模式下会滚到该日期的分组头）。
+    /// 定位到指定时间周期（年/月/日）内的照片：
+    /// 优先取周期内最新的一张（在「从新到旧」的首页分组里位于该组顶部）；
+    /// 周期内没有照片时，取周期开始前最近的一张，再不行取周期结束后最近的一张。
     private func jumpToAppointedDate() {
-        guard let date = appState.homeJumpDate else { return }
-        let calendar = Calendar.current
-        let targetDay = calendar.startOfDay(for: date)
+        guard let start = appState.homeJumpStart, let end = appState.homeJumpEnd else { return }
         guard !flatAssets.isEmpty else { return }
 
-        let exact = flatAssets.first {
-            guard let creation = $0.creationDate else { return false }
-            return calendar.isDate(creation, inSameDayAs: targetDay)
+        let date: (AssetInfo) -> Date = { $0.creationDate ?? .distantPast }
+        let inRange = flatAssets.filter { date($0) >= start && date($0) < end }
+        let target: AssetInfo?
+        if let newest = inRange.max(by: { date($0) < date($1) }) {
+            target = newest
+        } else {
+            let before = flatAssets.filter { date($0) < start }.max(by: { date($0) < date($1) })
+            let after = flatAssets.filter { date($0) >= end }.min(by: { date($0) < date($1) })
+            target = before ?? after
         }
-        let fallback = flatAssets.first { ($0.creationDate ?? .distantPast) <= targetDay } ?? flatAssets.last
-        guard let info = exact ?? fallback else { return }
+        guard let info = target else { return }
 
         jumpTargetId = info.id
         jumpToken += 1

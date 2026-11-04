@@ -280,6 +280,7 @@ struct DateUsageView: View {
     // MARK: - 跳转首页
 
     private func jump(to period: PeriodUsage) {
-        appState.jumpToHome(date: period.start)
+        // 带上周期结束时间：年/月/日粒度都能精确定位到该周期内的照片
+        appState.jumpToHome(start: period.start, end: period.end)
     }
 }

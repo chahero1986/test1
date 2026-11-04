@@ -34,6 +34,10 @@ struct PhotoDetailView: View {
 
     // 幻灯片滑动（未缩放时跟手）
     @State private var liveDrag: CGSize = .zero
+    /// 手势方向锁：一次拖动一旦判定主方向，松手前不再切换（避免滑动中途变向）
+    @State private var dragAxis: DragAxis?
+
+    private enum DragAxis { case horizontal, vertical }
 
     // 标记动画（变色 + 旋转飞出）
     @State private var markTint: Color?
@@ -268,20 +272,25 @@ struct PhotoDetailView: View {
                     if !isZoomed && !isMarking {
                         let w = value.translation.width
                         let h = value.translation.height
-                        if canMark && abs(h) > abs(w) && abs(h) > 30 {
-                            // 垂直拖动：实时显示顶部渐变与变色反馈（不移动照片）
+                        // 方向锁定：位移超过 15pt 时判定主方向，本手势内不再改变
+                        if dragAxis == nil, max(abs(w), abs(h)) > 15 {
+                            dragAxis = abs(w) >= abs(h) ? .horizontal : .vertical
+                        }
+                        if dragAxis == .horizontal || (dragAxis == .vertical && !canMark) {
+                            // 横向（或不可标记时的任意方向）：幻灯片跟手，左右滑动可见上一张/下一张
+                            liveDrag = value.translation
+                            clearMarkFeedback()
+                        } else if dragAxis == .vertical {
+                            // 纵向：实时显示顶部渐变与变色反馈（不移动照片）
                             liveDrag = .zero
                             let c: Color = h < 0 ? .red : .green
                             topTint = c.opacity(min(0.6, Double(abs(h)) / 600))
                             markTint = c.opacity(min(0.3, Double(abs(h)) / 1600))
-                        } else {
-                            // 幻灯片跟手：左右滑动可见上一张/下一张
-                            liveDrag = value.translation
-                            clearMarkFeedback()
                         }
                     }
                 }
                 .onEnded { value in
+                    dragAxis = nil
                     if isZoomed {
                         panOffset = CGSize(width: panOffset.width + value.translation.width,
                                            height: panOffset.height + value.translation.height)
