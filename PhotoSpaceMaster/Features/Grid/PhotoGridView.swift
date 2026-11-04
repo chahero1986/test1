@@ -33,6 +33,8 @@ struct PhotoGridView<BottomBar: View>: View {
     private let bottomBar: () -> BottomBar
 
     @State private var visibleCount = 120
+    /// 定位滚动序列代号：新的定位请求会让旧的延时滚动全部失效
+    @State private var jumpSeq = 0
 
     init(
         assets: [AssetInfo],
@@ -86,7 +88,9 @@ struct PhotoGridView<BottomBar: View>: View {
                 last.assets.append(info)
                 result[result.count - 1] = last
             } else {
-                result.append(AssetSection(key: "\(result.count)-\(title)", title: title, firstAsset: info, count: 1, totalBytes: info.byteSize, assets: [info]))
+                // key 使用「标题 + 组内首项 id」而非序号：分页扩张后仍保持稳定，
+                // 序号 key 在数据变化时会错位导致 scrollTo 落到别的分组
+                result.append(AssetSection(key: "\(title)#\(info.id)", title: title, firstAsset: info, count: 1, totalBytes: info.byteSize, assets: [info]))
             }
         }
         // 汇总每段数量与大小
@@ -147,25 +151,51 @@ struct PhotoGridView<BottomBar: View>: View {
     /// 跳转到定位书签：先扩充分页让目标行存在，再滚动。
     /// 分组模式下滚动到目标所在的分组头——目标单元格嵌在 LazyVStack+LazyVGrid
     /// 双层懒加载容器内，直接 scrollTo 单元格不可靠；分组头在 LazyVStack 顶层，可靠。
-    /// 深跳转（如跳到几年前）时目标行布局需要较长时间，固定延时会滚到半路，
-    /// 因此按多次延时重试滚动：目标行就位后 scrollTo 收敛到正确位置。
+    ///
+    /// 深跳转（如跳到几年前）时 LazyVStack 只有估算高度，单次 scrollTo 会停在估算位置，
+    /// 表现为「第一次定位偏、再点一次才对」。这里改成：
+    /// 1. 先用无动画直达，让目标区域进入渲染范围；
+    /// 2. 随后多次滚动校正（每次都在最新布局上重新解析目标），逐步收敛到准确位置；
+    /// 3. 每次解析都重新取 sections，保证分页扩张后仍能命中正确的分组头。
     private func scrollToBookmark(_ proxy: ScrollViewProxy) {
         guard let target = jumpToId else { return }
         if let idx = assets.firstIndex(where: { $0.id == target }) {
-            visibleCount = max(visibleCount, min(assets.count, idx + 1))
+            let needed = min(assets.count, idx + 1)
+            if needed > visibleCount { visibleCount = needed }
         }
-        for delay in [0.05, 0.3, 0.8, 1.5] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                var targetId = target
-                if makeSectionTitle != nil,
-                   let section = sections.first(where: { $0.assets.contains { $0.id == target } }) {
-                    targetId = section.key
-                }
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    proxy.scrollTo(targetId, anchor: .top)
+        jumpSeq += 1
+        let seq = jumpSeq
+        // (延时, 是否带动画)：首帧无动画直达，之后带动画校正
+        let schedule: [(delay: Double, animated: Bool)] = [
+            (0.02, false), (0.12, true), (0.3, true), (0.55, true),
+            (0.9, true), (1.4, true), (2.0, true), (2.8, true)
+        ]
+        for step in schedule {
+            DispatchQueue.main.asyncAfter(deadline: .now() + step.delay) {
+                guard seq == jumpSeq else { return }
+                let targetId = scrollTargetId(for: target)
+                if step.animated {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        proxy.scrollTo(targetId, anchor: .top)
+                    }
+                } else {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo(targetId, anchor: .top)
+                    }
                 }
             }
         }
+    }
+
+    /// 定位滚动目标：分组模式下用分组头 key，否则用项目 id
+    private func scrollTargetId(for target: String) -> String {
+        guard makeSectionTitle != nil else { return target }
+        guard let section = sections.first(where: { $0.assets.contains { $0.id == target } }) else {
+            return target
+        }
+        return section.key
     }
 
     @ViewBuilder

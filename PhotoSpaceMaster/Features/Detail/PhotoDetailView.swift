@@ -320,27 +320,30 @@ struct PhotoDetailView: View {
 
     // MARK: - 顶部信息（4 行）
 
+    /// 顶部信息固定 4 行占位。地点、相机参数是异步解析出来的，如果按「有值才显示」，
+    /// 换页瞬间高度会先缩后长，下面的图片区域跟着重排——左滑右滑时就表现为
+    /// 照片「上下跳一下」。这里空值也留一行占位并单行截断，保证信息区高度恒定。
     private var topInfo: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(dateText)
+                Text(dateText.isEmpty ? " " : dateText)
                     .font(.footnote.weight(.semibold))
                     .foregroundColor(.white)
-                Text(metaLine)
+                    .lineLimit(1)
+                Text(metaLine.isEmpty ? " " : metaLine)
                     .font(.caption2)
                     .foregroundColor(.white.opacity(0.85))
-                if !locationLine.isEmpty {
-                    Text(locationLine)
-                        .font(.caption2)
-                        .foregroundColor(.white.opacity(0.85))
-                }
-                if !cameraLine.isEmpty {
-                    Text(cameraLine)
-                        .font(.caption2)
-                        .foregroundColor(.white.opacity(0.85))
-                }
+                    .lineLimit(1)
+                Text(locationLine.isEmpty ? " " : locationLine)
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.85))
+                    .lineLimit(1)
+                Text(cameraLine.isEmpty ? " " : cameraLine)
+                    .font(.caption2)
+                    .foregroundColor(.white.opacity(0.85))
+                    .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -421,7 +424,7 @@ struct PhotoDetailView: View {
             appState.settings.bookmarkAssetId = isBookmarked ? "" : current.id
         } label: {
             VStack(spacing: 3) {
-                Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+                Image(systemName: "scope")
                     .font(.title3)
                 Text(isBookmarked ? "已定位" : "定位")
                     .font(.caption2)

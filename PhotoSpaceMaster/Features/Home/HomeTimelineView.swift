@@ -23,6 +23,10 @@ struct HomeTimelineView: View {
     /// 本次打开的查看器是否由「转到定位」触发：只有它才在关闭后回跳定位位置，
     /// 普通点击浏览返回时保持网格原有滚动位置，不做任何跳转
     @State private var jumpOnDismiss = false
+    /// 跨页定位请求：从「按占用空间排序」等页面跳过来时首页可能还没切到前台，
+    /// 先挂起，等首页可见、布局就绪后再执行
+    private enum JumpRequest { case period }
+    @State private var pendingJump: JumpRequest?
 
     private struct DayGroup: Identifiable {
         let id: Date
@@ -108,7 +112,7 @@ struct HomeTimelineView: View {
                     Button {
                         openBookmark()
                     } label: {
-                        Image(systemName: "location.magnifyingglass")
+                        Image(systemName: "scope")
                             .foregroundColor(.primary)
                     }
                     .disabled(appState.settings.bookmarkAssetId.isEmpty)
@@ -139,8 +143,7 @@ struct HomeTimelineView: View {
                 // 普通浏览返回不触发跳转，网格保持原有滚动位置
                 guard jumpOnDismiss, let id = lastOpenedId else { return }
                 jumpOnDismiss = false
-                jumpTargetId = id
-                jumpToken += 1
+                locateInGrid(id)
             }) { asset in
                 NavigationStack {
                     PhotoDetailView(assets: flatAssets, startId: asset.id)
@@ -148,11 +151,15 @@ struct HomeTimelineView: View {
             }
             .onAppear(perform: rebuildGroups)
             .onChange(of: appState.bookmarkJumpToken) { _ in openBookmark() }
-            // 从「按日期占用」等页面跳转过来：先按最新数据重建分组，
-            // 再定位到目标周期（年/月/日 → 该周期内最新一张照片的分组位置）
+            // 从「按日期占用」等页面跳转过来：此时可能正在切 Tab，首页尚未完成布局，
+            // 直接滚动会丢位置，所以先挂起，等首页可见后再定位
             .onChange(of: appState.homeJumpToken) { _ in
-                rebuildGroups()
-                DispatchQueue.main.async { jumpToAppointedDate() }
+                pendingJump = .period
+                schedulePendingJump()
+            }
+            .onChange(of: appState.selectedTab) { tab in
+                guard tab == .home else { return }
+                schedulePendingJump()
             }
             .onChange(of: library.assets.count) { _ in rebuildGroups() }
             .onChange(of: appState.filter) { _ in rebuildGroups() }
@@ -173,12 +180,45 @@ struct HomeTimelineView: View {
             jumpOnDismiss = true
             viewingAsset = info
         } else {
-            jumpTargetId = bookmarkId
+            locateInGrid(bookmarkId)
+        }
+    }
+
+    /// 定位到网格中的某个项目（书签 / 关闭查看器后回跳）：
+    /// 立即滚一次，稍后再补一次——深跳转时首次 scrollTo 常落在估算位置，
+    /// 第二次在已稳定的布局上执行就能对准（等价于用户「再点一次」）
+    private func locateInGrid(_ id: String) {
+        jumpTargetId = id
+        jumpToken += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard jumpTargetId == id else { return }
             jumpToken += 1
         }
     }
 
     // MARK: - 跨页日期定位
+
+    /// 挂起的定位请求延后执行：从统计页点「定位」时会连带切 Tab，
+    /// 过渡动画期间滚动视图还没完成布局，这时 scrollTo 会丢位置，
+    /// 表现为「第一次定位偏、再点一次才对」。
+    private func schedulePendingJump() {
+        guard pendingJump != nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            performPendingJump()
+        }
+    }
+
+    private func performPendingJump() {
+        guard pendingJump != nil, appState.selectedTab == .home else { return }
+        pendingJump = nil
+        rebuildGroups()
+        DispatchQueue.main.async { jumpToAppointedDate() }
+        // 二次定位：与用户「再点一次」等效，用稳定后的布局修正首次滚动的偏差
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+            guard appState.selectedTab == .home else { return }
+            jumpToAppointedDate()
+        }
+    }
 
     /// 定位到指定时间周期（年/月/日）内的照片：
     /// 优先取周期内最新的一张（在「从新到旧」的首页分组里位于该组顶部）；
@@ -331,11 +371,12 @@ private struct DayHeaderView: View {
                     .font(.subheadline.weight(.bold))
                     .foregroundColor(.secondary)
             }
-            if !locationText.isEmpty {
-                Text(locationText)
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-            }
+            // 地点是异步反地理编码出来的：若按「有值才显示」，这一行出现时
+            // 分组头会变高，下方整组缩略图会整体往下窜一下。用空格占位保持高度恒定。
+            Text(locationText.isEmpty ? " " : locationText)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
         }
         .padding(.horizontal, 16)
         .padding(.top, 18)
