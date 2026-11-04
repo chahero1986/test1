@@ -18,10 +18,15 @@ final class ThumbnailManager {
     private let assetCacheQueue = DispatchQueue(label: "thumbnail.assetcache")
 
     private func asset(for id: String) -> PHAsset? {
-        if let hit = assetCache[id] { return hit }
+        // 读写都必须走串行队列：网格 cell 并发触发加载，直接访问字典存在数据竞争
+        if let hit = assetCacheQueue.sync(execute: { assetCache[id] }) { return hit }
         let fetch = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil)
         guard let asset = fetch.firstObject else { return nil }
-        assetCacheQueue.sync { assetCache[id] = asset }
+        assetCacheQueue.sync {
+            // 上限保护：超大图库下 PHAsset 字典只增不减会持续吃内存，超过后清空重缓存
+            if assetCache.count > 8000 { assetCache.removeAll() }
+            assetCache[id] = asset
+        }
         return asset
     }
 
@@ -41,11 +46,11 @@ final class ThumbnailManager {
 
         return await withCheckedContinuation { continuation in
             manager.requestImage(for: asset, targetSize: target, contentMode: .aspectFill, options: options) { image, _ in
-                if let image {
-                    // 预解码：避免首次显示时在主线程解码造成掉帧（闪烁）
-                    self.cache.setObject(image.preparingForDisplay() ?? image, forKey: key)
-                }
-                continuation.resume(returning: image.map { $0.preparingForDisplay() ?? $0 })
+                guard let image else { continuation.resume(returning: nil); return }
+                // 预解码只做一次：解码结果进缓存并直接返回（原实现解码两遍）
+                let decoded = image.preparingForDisplay() ?? image
+                self.cache.setObject(decoded, forKey: key)
+                continuation.resume(returning: decoded)
             }
         }
     }
@@ -66,11 +71,11 @@ final class ThumbnailManager {
 
         return await withCheckedContinuation { continuation in
             manager.requestImage(for: asset, targetSize: target, contentMode: .aspectFit, options: options) { image, _ in
-                if let image {
-                    // 预解码：大图首次显示直接解码完成，避免主线程解码掉帧
-                    self.cache.setObject(image.preparingForDisplay() ?? image, forKey: key)
-                }
-                continuation.resume(returning: image.map { $0.preparingForDisplay() ?? $0 })
+                guard let image else { continuation.resume(returning: nil); return }
+                // 预解码只做一次：解码结果进缓存并直接返回
+                let decoded = image.preparingForDisplay() ?? image
+                self.cache.setObject(decoded, forKey: key)
+                continuation.resume(returning: decoded)
             }
         }
     }

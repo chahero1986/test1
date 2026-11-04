@@ -2,7 +2,8 @@ import Photos
 import Foundation
 
 /// PhotoKit 唯一封装层：业务代码不得直接接触 PHPhotoLibrary / PHAsset。
-final class PhotoLibraryService {
+/// 无状态单例（仅方法与常量），可安全在后台线程调用，故标记 @unchecked Sendable。
+final class PhotoLibraryService: @unchecked Sendable {
     static let shared = PhotoLibraryService()
     private init() {}
 
@@ -82,7 +83,9 @@ final class PhotoLibraryService {
     static func info(from asset: PHAsset) -> AssetInfo {
         let isScreenshot = asset.mediaSubtypes.contains(.photoScreenshot)
         let isLive = asset.mediaSubtypes.contains(.photoLive)
-        let screenRec = asset.mediaType == .video && isScreenRecording(asset)
+        // assetResources 获取开销大：一次获取，文件大小与录屏识别共用
+        let resources = PHAssetResource.assetResources(for: asset)
+        let screenRec = asset.mediaType == .video && isScreenRecording(asset, resources: resources)
         let kind: MediaKind
         switch asset.mediaType {
         case .video: kind = .video
@@ -92,7 +95,7 @@ final class PhotoLibraryService {
         return AssetInfo(
             id: asset.localIdentifier,
             kind: kind,
-            byteSize: byteSize(of: asset),
+            byteSize: byteSize(of: asset, resources: resources),
             durationSeconds: asset.duration,
             pixelWidth: asset.pixelWidth,
             pixelHeight: asset.pixelHeight,
@@ -105,14 +108,14 @@ final class PhotoLibraryService {
     }
 
     /// 文件大小：通过 PHAssetResource 的 fileSize（KVC）获取
-    private static func byteSize(of asset: PHAsset) -> Int64 {
-        PHAssetResource.assetResources(for: asset)
-            .reduce(Int64(0)) { $0 + Int64($1.value(forKey: "fileSize") as? Int ?? 0) }
+    private static func byteSize(of asset: PHAsset, resources: [PHAssetResource]) -> Int64 {
+        resources.reduce(Int64(0)) { $0 + Int64($1.value(forKey: "fileSize") as? Int ?? 0) }
     }
 
     /// 大录屏识别（已确认的近似方案）：UTI + 文件名特征
-    static func isScreenRecording(_ asset: PHAsset) -> Bool {
-        PHAssetResource.assetResources(for: asset).contains { resource in
+    static func isScreenRecording(_ asset: PHAsset, resources: [PHAssetResource]? = nil) -> Bool {
+        let resources = resources ?? PHAssetResource.assetResources(for: asset)
+        return resources.contains { resource in
             let name = resource.originalFilename.lowercased()
             return name.contains("screen")
                 || resource.originalFilename.contains("屏幕录制")

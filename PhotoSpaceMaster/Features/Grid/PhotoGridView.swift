@@ -305,11 +305,24 @@ struct GridCellView: View {
             }
     }
 
-    private static func durationText(_ seconds: Double) -> String {
+    private static let shortDurationFormatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = seconds >= 3600 ? [.hour, .minute, .second] : [.minute, .second]
+        formatter.allowedUnits = [.minute, .second]
         formatter.unitsStyle = .positional
         formatter.zeroFormattingBehavior = .pad
+        return formatter
+    }()
+
+    private static let longDurationFormatter: DateComponentsFormatter = {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute, .second]
+        formatter.unitsStyle = .positional
+        formatter.zeroFormattingBehavior = .pad
+        return formatter
+    }()
+
+    private static func durationText(_ seconds: Double) -> String {
+        let formatter = seconds >= 3600 ? longDurationFormatter : shortDurationFormatter
         return formatter.string(from: seconds) ?? ""
     }
 }

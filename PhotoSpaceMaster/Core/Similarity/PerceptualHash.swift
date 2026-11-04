@@ -4,6 +4,16 @@ import UIKit
 /// 用于相似/重复照片判定，纯本地计算，不访问网络。
 enum PerceptualHash {
 
+    /// DCT 余弦表：纯常量，进程内只计算一次（原实现每张图重建 32×32 表，纯浪费）
+    private static let cosTable: [[Double]] = {
+        let size = 32
+        return (0..<size).map { u in
+            (0..<size).map { x in
+                cos((2 * Double(x) + 1) * Double(u) * Double.pi / (2 * Double(size)))
+            }
+        }
+    }()
+
     /// 计算一张图片的 64 位 pHash
     static func phash(of image: UIImage) -> UInt64? {
         guard let cg = image.cgImage else { return nil }
@@ -31,13 +41,7 @@ enum PerceptualHash {
             gray[i] = 0.299 * r + 0.587 * g + 0.114 * b
         }
 
-        // 预计算 DCT 余弦表
-        var cosTable = [[Double]](repeating: [Double](repeating: 0, count: size), count: size)
-        for u in 0..<size {
-            for x in 0..<size {
-                cosTable[u][x] = cos((2 * Double(x) + 1) * Double(u) * Double.pi / (2 * Double(size)))
-            }
-        }
+        let cosTable = Self.cosTable
 
         // 分离式 DCT-II：先按行、再按列
         var tmp = [Double](repeating: 0, count: size * size)
