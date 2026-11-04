@@ -142,6 +142,10 @@ struct HomeTimelineView: View {
             }
             .onAppear(perform: rebuildGroups)
             .onChange(of: appState.bookmarkJumpToken) { _ in openBookmark() }
+            // 从「按日期占用」等页面跳转过来：等分组重建后再定位到该日期
+            .onChange(of: appState.homeJumpToken) { _ in
+                DispatchQueue.main.async { jumpToAppointedDate() }
+            }
             .onChange(of: library.assets.count) { _ in rebuildGroups() }
             .onChange(of: appState.filter) { _ in rebuildGroups() }
             .onChange(of: appState.settings.sortOrder) { _ in rebuildGroups() }
@@ -163,6 +167,27 @@ struct HomeTimelineView: View {
             jumpTargetId = bookmarkId
             jumpToken += 1
         }
+    }
+
+    // MARK: - 跨页日期定位
+
+    /// 定位到指定日期的第一张照片；该日期没有照片时取相邻最近的一张（更早的优先）。
+    /// 复用 PhotoGridView 的 jumpToId / jumpToken 机制（分组模式下会滚到该日期的分组头）。
+    private func jumpToAppointedDate() {
+        guard let date = appState.homeJumpDate else { return }
+        let calendar = Calendar.current
+        let targetDay = calendar.startOfDay(for: date)
+        guard !flatAssets.isEmpty else { return }
+
+        let exact = flatAssets.first {
+            guard let creation = $0.creationDate else { return false }
+            return calendar.isDate(creation, inSameDayAs: targetDay)
+        }
+        let fallback = flatAssets.first { ($0.creationDate ?? .distantPast) <= targetDay } ?? flatAssets.last
+        guard let info = exact ?? fallback else { return }
+
+        jumpTargetId = info.id
+        jumpToken += 1
     }
 
     // MARK: - 分组头（iOS 相册「日」视图风格：大字日期 + 星期 + 数量/大小 + 地点）

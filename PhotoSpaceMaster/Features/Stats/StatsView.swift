@@ -13,6 +13,7 @@ struct StatsView: View {
             VStack(spacing: 16) {
                 summaryCards
                 storageCard
+                yearlyCard
                 similarCard
                 entriesCard
             }
@@ -96,6 +97,43 @@ struct StatsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
+    // MARK: - 按年度占用柱状图
+
+    private var yearlyPeriods: [PeriodUsage] {
+        StorageBreakdown.periods(library.assets, granularity: .year)
+    }
+
+    private var yearlyCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("按年度占用空间")
+                    .font(.headline)
+                Spacer()
+                if let newest = yearlyPeriods.first {
+                    Text("最新：\(newest.title)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if yearlyPeriods.isEmpty {
+                Text("暂无照片数据")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 80)
+            } else {
+                StorageBarChart(periods: yearlyPeriods, chartHeight: 110)
+                Text("共 \(yearlyPeriods.count) 个年度 · 单位按文件大小显示")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
     // MARK: - 相似照片清理入口
 
     private var similarCard: some View {
@@ -142,9 +180,34 @@ struct StatsView: View {
             entryRow(mode: .screenRecording, title: "大录屏", subtitle: "识别录屏类型", icon: "display", color: .red)
             Divider().padding(.leading)
             entryRow(mode: .largePhoto, title: "大图片", subtitle: "按文件大小降序", icon: "photo.fill", color: .blue)
+            Divider().padding(.leading)
+            dateUsageRow
         }
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// 按日期占用：年/月/日粒度 + 区间筛选 + 点击跳转首页
+    private var dateUsageRow: some View {
+        NavigationLink {
+            DateUsageView()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "calendar.badge.clock")
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color.orange))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("按日期占用").foregroundColor(.primary)
+                    Text("年/月/日粒度 · 按日期倒序 · 点击跳转首页").font(.caption).foregroundColor(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote)
+                    .foregroundColor(Color(.tertiaryLabel))
+            }
+            .padding()
+        }
     }
 
     private func entryRow(mode: LargeItemsMode, title: String, subtitle: String, icon: String, color: Color) -> some View {

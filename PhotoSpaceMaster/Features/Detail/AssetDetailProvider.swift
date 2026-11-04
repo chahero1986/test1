@@ -15,18 +15,44 @@ final class AssetDetailProvider {
 
     // MARK: - 视频播放项
 
+    /// AVPlayerItem 缓存：左右滑动到视频时直接复用预取结果，避免黑屏等待
+    private var playerItemCache: [String: AVPlayerItem] = [:]
+    private let playerItemQueue = DispatchQueue(label: "detail.playeritem")
+
+    private func cachedPlayerItem(for id: String) -> AVPlayerItem? {
+        playerItemQueue.sync { playerItemCache[id] }
+    }
+
+    private func storePlayerItem(_ item: AVPlayerItem, for id: String) {
+        playerItemQueue.sync {
+            // 上限保护：详情页浏览跨度可能很大，只保留最近 20 条
+            if playerItemCache.count >= 20 { playerItemCache.removeAll() }
+            playerItemCache[id] = item
+        }
+    }
+
     func playerItem(for info: AssetInfo) async -> AVPlayerItem? {
         guard info.kind == .video else { return nil }
+        if let hit = cachedPlayerItem(for: info.id) { return hit }
+
         let fetch = PHAsset.fetchAssets(withLocalIdentifiers: [info.id], options: nil)
         guard let asset = fetch.firstObject else { return nil }
         let options = PHVideoRequestOptions()
         options.version = .current
         options.deliveryMode = .automatic
-        return await withCheckedContinuation { continuation in
+        let item: AVPlayerItem? = await withCheckedContinuation { continuation in
             PHImageManager.default().requestPlayerItem(forVideo: asset, options: options) { item, _ in
                 continuation.resume(returning: item)
             }
         }
+        if let item { storePlayerItem(item, for: info.id) }
+        return item
+    }
+
+    /// 预取相邻视频的播放项（幻灯片翻页前调用），使滑到视频时立即可播
+    func preloadPlayerItem(for info: AssetInfo) {
+        guard info.kind == .video, cachedPlayerItem(for: info.id) == nil else { return }
+        Task { _ = await self.playerItem(for: info) }
     }
 
     // MARK: - 地点 · 海拔

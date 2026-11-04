@@ -63,6 +63,31 @@ enum HomeLayout: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - 语言（默认跟随系统）
+
+enum AppLanguage: String, CaseIterable, Identifiable {
+    case system, zhHans, en
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .zhHans: return "简体中文"
+        case .en: return "English"
+        }
+    }
+
+    /// 注入 SwiftUI 环境的 locale；跟随系统时用自动更新的当前语言
+    var resolvedLocale: Locale {
+        switch self {
+        case .system: return .autoupdatingCurrent
+        case .zhHans: return Locale(identifier: "zh-Hans")
+        case .en: return Locale(identifier: "en")
+        }
+    }
+}
+
 // MARK: - 设置（持久化到 UserDefaults）
 
 @MainActor
@@ -103,6 +128,11 @@ final class SettingsStore: ObservableObject {
         didSet { ud.set(homeLayout.rawValue, forKey: "settings.homeLayout") }
     }
 
+    /// 界面语言（默认跟随系统）
+    @Published var language: AppLanguage {
+        didSet { ud.set(language.rawValue, forKey: "settings.language") }
+    }
+
     init() {
         theme = ThemeMode(rawValue: ud.string(forKey: "settings.theme") ?? "") ?? .auto
         sortOrder = SortOrder(rawValue: ud.string(forKey: "settings.sortOrder") ?? "") ?? .descending
@@ -114,6 +144,7 @@ final class SettingsStore: ObservableObject {
         largeVideoThresholdMB = ud.object(forKey: "stats.largeVideoMB") as? Int ?? 200
         largePhotoThresholdMB = ud.object(forKey: "stats.largePhotoMB") as? Int ?? 10
         homeLayout = HomeLayout(rawValue: ud.string(forKey: "settings.homeLayout") ?? "") ?? .byDate
+        language = AppLanguage(rawValue: ud.string(forKey: "settings.language") ?? "") ?? .system
     }
 
     /// 恢复默认设置（入口有二次确认）
@@ -127,10 +158,16 @@ final class SettingsStore: ObservableObject {
         largeVideoThresholdMB = 200
         largePhotoThresholdMB = 10
         homeLayout = .byDate
+        language = .system
     }
 }
 
 // MARK: - 全局状态
+
+/// 主 Tab（供跨页跳转，如「按日期占用」点击日期回到首页）
+enum AppTab: Hashable {
+    case home, albums, stats
+}
 
 @MainActor
 final class AppState: ObservableObject {
@@ -147,6 +184,9 @@ final class AppState: ObservableObject {
             }
     }
 
+    /// 当前 Tab
+    @Published var selectedTab: AppTab = .home
+
     /// 筛选状态：会话内保持（切 Tab、进出子页不重置），App 冷启动后恢复默认
     @Published var filter = PhotoFilter()
 
@@ -155,6 +195,17 @@ final class AppState: ObservableObject {
 
     /// 「转到定位」请求计数器：筛选面板点击后 +1，首页监听后跳转到书签位置
     @Published var bookmarkJumpToken = 0
+
+    /// 「跳转到某天」请求：目标日期 + 计数器，首页监听后定位到该日期第一张照片
+    @Published var homeJumpDate: Date?
+    @Published var homeJumpToken = 0
+
+    /// 从其他页面跳回首页并定位到指定日期
+    func jumpToHome(date: Date) {
+        homeJumpDate = date
+        homeJumpToken += 1
+        selectedTab = .home
+    }
 
     func isProtected(_ id: String) -> Bool { protectedIds.contains(id) }
     func isTrashed(_ id: String) -> Bool { trashIds.contains(id) }

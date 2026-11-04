@@ -50,6 +50,12 @@ struct PhotoDetailView: View {
     @State private var prevImage: UIImage?
     @State private var nextImage: UIImage?
     @State private var player: AVPlayer?
+    /// 当前播放器对应的资产 id：换页后旧播放器未清理时不会误显示上一段视频
+    @State private var playerAssetId: String?
+    /// 视频首帧海报：播放器就绪前占位，避免黑屏（也避免用上一张照片兜底造成闪回）
+    @State private var videoPoster: UIImage?
+    /// 海报对应的资产 id：跨视频切换时不会显示上一段视频的海报
+    @State private var videoPosterAssetId: String?
     @State private var dateText = ""
     @State private var metaLine = ""
     @State private var locationLine = ""
@@ -170,9 +176,26 @@ struct PhotoDetailView: View {
     /// 当前媒体内容：视频播放器或图片
     @ViewBuilder
     private var mediaContent: some View {
-        if current.kind == .video, let player {
-            VideoPlayer(player: player)
-                .ignoresSafeArea()
+        if current.kind == .video {
+            // 播放器必须属于当前资产，否则显示首帧海报/黑底占位——
+            // 不能用 `image` 兜底，否则会闪一下上一张照片
+            if let player, playerAssetId == current.id {
+                VideoPlayer(player: player)
+                    .ignoresSafeArea()
+            } else if let videoPoster, videoPosterAssetId == current.id {
+                ZStack {
+                    Color.black
+                    Image(uiImage: videoPoster)
+                        .resizable()
+                        .scaledToFit()
+                }
+            } else {
+                ZStack {
+                    Color.black
+                    ProgressView()
+                        .tint(.white)
+                }
+            }
         } else if let image {
             Image(uiImage: image)
                 .resizable()
@@ -491,7 +514,20 @@ struct PhotoDetailView: View {
                 transaction.disablesAnimations = true
                 withTransaction(transaction) {
                     index = next
-                    if let adjacent, assets[next].kind != .video { image = adjacent }
+                    if assets[next].kind == .video {
+                        // 目标是视频：清空旧图与旧播放器，只显示该视频自己的海报，
+                        // 否则 mediaContent 会先渲染上一张照片再切到视频（闪一下）
+                        image = nil
+                        videoPoster = adjacent
+                        videoPosterAssetId = adjacent != nil ? assets[next].id : nil
+                        player?.pause()
+                        player = nil
+                        playerAssetId = nil
+                    } else if let adjacent {
+                        image = adjacent
+                    } else {
+                        image = nil
+                    }
                     liveDrag = .zero
                 }
             } else {
@@ -567,7 +603,19 @@ struct PhotoDetailView: View {
             transaction.disablesAnimations = true
             withTransaction(transaction) {
                 index = next
-                if let adjacent, assets[next].kind != .video { image = adjacent }
+                if assets[next].kind == .video {
+                    // 标记后自动前进到视频：同样清空旧画面，避免闪回上一张
+                    image = nil
+                    videoPoster = adjacent
+                    videoPosterAssetId = adjacent != nil ? assets[next].id : nil
+                    player?.pause()
+                    player = nil
+                    playerAssetId = nil
+                } else if let adjacent {
+                    image = adjacent
+                } else {
+                    image = nil
+                }
             }
         } else {
             dismiss()
@@ -588,7 +636,9 @@ struct PhotoDetailView: View {
 
     private func loadCurrent() {
         let info = current
+        player?.pause()
         player = nil
+        playerAssetId = nil
         resetZoom()
         isFavorite = info.isFavorite
 
@@ -622,25 +672,39 @@ struct PhotoDetailView: View {
             // 同一张照片的清晰度升级：瞬时替换（不做交叉淡化，避免轻微闪烁）
             image = img
         }
-        // 幻灯片相邻照片预加载（视频显示黑底占位）
+        // 视频首帧海报：播放器就绪前先显示画面，避免黑屏
+        if info.kind == .video {
+            Task {
+                let poster = await ThumbnailManager.shared.largeImage(for: info, side: 1080)
+                guard current.id == info.id else { return }
+                videoPosterAssetId = info.id
+                videoPoster = poster
+            }
+        }
+        // 幻灯片相邻项预加载（图片载入画面，视频载入海报并预取播放项）
         Task {
             guard index > 0, current.id == info.id else { return }
             let neighbor = assets[index - 1]
-            if neighbor.kind != .video {
-                let img = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
-                if current.id == info.id { prevImage = img }
+            let img = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
+            if neighbor.kind == .video {
+                AssetDetailProvider.shared.preloadPlayerItem(for: neighbor)
             }
+            if current.id == info.id { prevImage = img }
         }
         Task {
             guard index < assets.count - 1, current.id == info.id else { return }
             let neighbor = assets[index + 1]
-            if neighbor.kind != .video {
-                let img = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
-                if current.id == info.id { nextImage = img }
+            let img = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
+            if neighbor.kind == .video {
+                AssetDetailProvider.shared.preloadPlayerItem(for: neighbor)
             }
+            if current.id == info.id { nextImage = img }
         }
         Task {
             if let item = await AssetDetailProvider.shared.playerItem(for: info) {
+                // 过期保护：等待期间用户可能已翻页，不要把旧视频塞进新页面
+                guard current.id == info.id else { return }
+                playerAssetId = info.id
                 player = AVPlayer(playerItem: item)
             }
         }

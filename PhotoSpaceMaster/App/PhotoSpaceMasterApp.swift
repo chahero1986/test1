@@ -57,6 +57,8 @@ struct PhotoSpaceMasterApp: App {
                 }
             }
             .preferredColorScheme(appState.settings.theme.colorScheme)
+            // 语言：跟随系统 / 强制简体中文 / 强制英文（影响系统组件与已本地化文案）
+            .environment(\.locale, appState.settings.language.resolvedLocale)
         }
     }
 
