@@ -18,7 +18,7 @@ final class LibraryStore: ObservableObject {
         var albumMemberIds: Set<String>
     }
 
-    private static var cacheURL: URL? {
+    nonisolated private static var cacheURL: URL? {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
             .first?
             .appendingPathComponent("library_cache.json")

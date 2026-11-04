@@ -39,6 +39,19 @@ enum MediaKind: Int16, CaseIterable, Hashable {
 
 // MARK: - 资产轻量元数据
 
+/// MediaKind 的 Codable：按 Int16 原始值编解码（未知值回退为 .photo）
+extension MediaKind: Codable {
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(Int16.self)
+        self = MediaKind(rawValue: raw) ?? .photo
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 struct AssetInfo: Identifiable, Hashable, Codable {
     let id: String                 // PHAsset.localIdentifier
     let kind: MediaKind
