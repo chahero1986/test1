@@ -24,9 +24,6 @@ final class VoiceCommandRecognizer: ObservableObject {
         case stop       // 结束聆听
     }
 
-    /// 提示条占位文案：与下方词表保持一致，改词表时同步改这里
-    static let hint = "说：删 · 留 · 过 · 上 · 撤 · 停"
-
     @Published private(set) var isListening = false
     /// 实时识别文字（界面用黄色显示，让用户确认是否听对）。
     /// 指令一执行就清空：下一张照片从全新状态开始，不残留上一句的内容

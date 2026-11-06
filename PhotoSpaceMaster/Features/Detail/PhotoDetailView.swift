@@ -335,7 +335,8 @@ struct PhotoDetailView: View {
     }
 
     /// 语音提示条（浮在照片上方）：
-    /// - 聆听中：实时显示识别文字（黄色），让用户确认是否听对
+    /// - 聆听中且还没听到内容：显示指令对照表（说什么 → 执行什么）
+    /// - 聆听中且听到内容：实时显示识别文字（黄色），让用户确认是否听对
     /// - 刚执行完一条指令：下方再叠一条「已移入垃圾箱」的确认，1 秒后消失
     /// 两条同时显示是刻意的：连续说「删、删、删」时既要看到结果，
     /// 也要能立刻发现某一句被听错了。
@@ -343,11 +344,11 @@ struct PhotoDetailView: View {
     private var voiceHintBar: some View {
         VStack(spacing: 6) {
             if voice.isListening {
-                voiceCapsule(
-                    symbol: "waveform",
-                    text: voice.transcript.isEmpty ? VoiceCommandRecognizer.hint : voice.transcript,
-                    tint: voice.transcript.isEmpty ? .white.opacity(0.6) : .yellow
-                )
+                if voice.transcript.isEmpty {
+                    voiceCommandHint
+                } else {
+                    voiceCapsule(symbol: "waveform", text: voice.transcript, tint: .yellow)
+                }
             }
             if let item = voiceFlash {
                 voiceCapsule(symbol: item.symbol, text: item.text, tint: item.tint)
@@ -357,6 +358,33 @@ struct PhotoDetailView: View {
         }
         .padding(.top, 12)
         .allowsHitTesting(false)
+    }
+
+    /// 指令对照表：进入聆听状态后先展示，一听到内容就让位给实时识别文字
+    private var voiceCommandHint: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            voiceHintRow(words: "删 · 删除 · 垃圾", action: "移入垃圾箱")
+            voiceHintRow(words: "过 · 下一个 · 跳过", action: "直接到下一张")
+            voiceHintRow(words: "留 · 保留 · 免删", action: "加入免删除")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.72)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.15), lineWidth: 0.5))
+    }
+
+    private func voiceHintRow(words: String, action: String) -> some View {
+        HStack(spacing: 8) {
+            Text("「\(words)」")
+                .font(.footnote.weight(.semibold))
+                .foregroundColor(.white)
+            Image(systemName: "arrow.right")
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.5))
+            Text(action)
+                .font(.footnote)
+                .foregroundColor(.white.opacity(0.85))
+        }
     }
 
     private func voiceCapsule(symbol: String, text: String, tint: Color) -> some View {
