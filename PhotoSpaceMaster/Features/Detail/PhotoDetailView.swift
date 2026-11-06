@@ -34,6 +34,56 @@ struct PhotoDetailView: View {
     /// 媒体区实际尺寸：语音标记的飞行动画要按它计算目标位置
     @State private var mediaSize: CGSize = .zero
 
+    /// 语音执行结果反馈：说完一句立刻显示「已移入垃圾箱」这类确认，
+    /// 用户不必回头看照片是否真的被标记（语音场景下很多人不看屏幕）
+    private enum VoiceFlash: Equatable {
+        case trash, protect, next, previous, undo
+        case warning(String)
+
+        var text: String {
+            switch self {
+            case .trash: return "已移入垃圾箱"
+            case .protect: return "已加入免删除"
+            case .next: return "下一张"
+            case .previous: return "上一张"
+            case .undo: return "已撤销"
+            case .warning(let message): return message
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .trash: return "trash.fill"
+            case .protect: return "checkmark.shield.fill"
+            case .next: return "chevron.forward"
+            case .previous: return "chevron.backward"
+            case .undo: return "arrow.uturn.backward"
+            case .warning: return "exclamationmark.triangle.fill"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .trash: return .red
+            case .protect: return .green
+            case .next, .previous: return .white
+            case .undo: return .cyan
+            case .warning: return .orange
+            }
+        }
+    }
+
+    @State private var voiceFlash: VoiceFlash?
+    @State private var voiceFlashTask: Task<Void, Never>?
+
+    /// 最近一次语音标记：说「撤销」时用来回滚（限 10 秒内，避免误撤销很久以前的操作）
+    private struct VoiceMark {
+        let id: String
+        let kind: MarkKind
+        let at: Date
+    }
+    @State private var lastVoiceMark: VoiceMark?
+
     // 缩放与拖动
     @State private var scale: CGFloat = 1
     @GestureState private var pinchScale: CGFloat = 1
@@ -104,6 +154,7 @@ struct PhotoDetailView: View {
                         topGradient
                         voiceHintBar
                             .animation(.easeOut(duration: 0.2), value: voice.isListening)
+                            .animation(.easeOut(duration: 0.18), value: voiceFlash)
                     }
                 }
                 if showRatingPanel { ratingPanel }
@@ -283,29 +334,45 @@ struct PhotoDetailView: View {
         }
     }
 
-    /// 聆听提示条：浮在照片上方，实时显示识别到的文字（黄色），让用户确认是否听对
+    /// 语音提示条（浮在照片上方）：
+    /// - 聆听中：实时显示识别文字（黄色），让用户确认是否听对
+    /// - 刚执行完一条指令：下方再叠一条「已移入垃圾箱」的确认，1 秒后消失
+    /// 两条同时显示是刻意的：连续说「删、删、删」时既要看到结果，
+    /// 也要能立刻发现某一句被听错了。
     @ViewBuilder
     private var voiceHintBar: some View {
-        if voice.isListening {
-            VStack(spacing: 0) {
-                HStack(spacing: 7) {
-                    Image(systemName: "waveform")
-                        .font(.caption)
-                        .foregroundColor(.red)
-                    Text(voice.transcript.isEmpty ? "请说：删 · 过 · 留" : voice.transcript)
-                        .font(.footnote)
-                        .lineLimit(1)
-                        .foregroundColor(voice.transcript.isEmpty ? .white.opacity(0.75) : .yellow)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(Color.black.opacity(0.7)))
-                .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
-                Spacer(minLength: 0)
+        VStack(spacing: 6) {
+            if voice.isListening {
+                voiceCapsule(
+                    symbol: "waveform",
+                    text: voice.transcript.isEmpty ? VoiceCommandRecognizer.hint : voice.transcript,
+                    tint: voice.transcript.isEmpty ? .white.opacity(0.6) : .yellow
+                )
             }
-            .padding(.top, 12)
-            .allowsHitTesting(false)
+            if let item = voiceFlash {
+                voiceCapsule(symbol: item.symbol, text: item.text, tint: item.tint)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            Spacer(minLength: 0)
         }
+        .padding(.top, 12)
+        .allowsHitTesting(false)
+    }
+
+    private func voiceCapsule(symbol: String, text: String, tint: Color) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: symbol)
+                .font(.caption)
+                .foregroundColor(tint)
+            Text(text)
+                .font(.footnote)
+                .lineLimit(1)
+                .foregroundColor(tint)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Capsule().fill(Color.black.opacity(0.72)))
+        .overlay(Capsule().stroke(tint.opacity(0.35), lineWidth: 0.5))
     }
 
     private func mediaArea(size: CGSize) -> some View {
@@ -523,18 +590,114 @@ struct PhotoDetailView: View {
     private func handleVoice(_ command: VoiceCommandRecognizer.Command) {
         switch command {
         case .next:
+            flash(.next)
+            haptic(.light)
             advanceByVoice()
+
+        case .previous:
+            flash(.previous)
+            haptic(.light)
+            goBackByVoice()
+
         case .trash:
             // 已入垃圾箱或已免删除的项目：再说「删」不再重复标记，直接看下一张
-            if canMark { commitMark(.trash, size: voiceMarkSize) } else { advanceByVoice() }
+            guard canMark else { skipAlreadyMarked(); return }
+            lastVoiceMark = VoiceMark(id: current.id, kind: .trash, at: Date())
+            flash(.trash)
+            haptic(.heavy)
+            commitMark(.trash, size: voiceMarkSize)
+
         case .protect:
-            if canMark { commitMark(.protect, size: voiceMarkSize) } else { advanceByVoice() }
+            guard canMark else { skipAlreadyMarked(); return }
+            lastVoiceMark = VoiceMark(id: current.id, kind: .protect, at: Date())
+            flash(.protect)
+            haptic(.medium)
+            commitMark(.protect, size: voiceMarkSize)
+
+        case .undo:
+            undoLastVoiceMark()
+
+        case .stop:
+            voice.stop()
+            flash(.warning("已结束聆听"))
+            haptic(.light)
         }
     }
 
     private func advanceByVoice() {
         guard !isMarking else { return }
         move(direction)
+    }
+
+    /// 当前这张已经标记过：语音不该重复标记，但也不能毫无反应让用户以为没听见
+    private func skipAlreadyMarked() {
+        flash(.warning("已标记过，跳到下一张"))
+        haptic(.light)
+        advanceByVoice()
+    }
+
+    /// 语音「上一张」：只回退一格，不改变后续标记的前进方向；
+    /// 已在第一张时给出提示而不是关闭页面（关闭页面是右滑手势的语义，不是语音的）
+    private func goBackByVoice() {
+        guard !isMarking else { return }
+        guard nextNavigableIndex(from: index, dir: .backward) != nil else {
+            flash(.warning("已经是第一张"))
+            return
+        }
+        let keep = direction
+        move(.backward, dismissOnEdge: false)
+        direction = keep
+    }
+
+    /// 撤销最近一次语音标记（限 10 秒）：语音最容易出现的失误是听错，
+    /// 没有撤销就等于每听错一次都要去垃圾箱翻半天。
+    private func undoLastVoiceMark() {
+        guard let mark = lastVoiceMark else {
+            flash(.warning("没有可撤销的操作"))
+            haptic(.light)
+            return
+        }
+        guard Date().timeIntervalSince(mark.at) < 10 else {
+            lastVoiceMark = nil
+            flash(.warning("超过 10 秒，请到垃圾箱恢复"))
+            haptic(.light)
+            return
+        }
+
+        switch mark.kind {
+        case .trash:
+            CleanupService.restore(ids: [mark.id], state: appState)
+        case .protect:
+            if appState.isProtected(mark.id) {
+                CleanupService.toggleProtected([mark.id], state: appState)
+            }
+        }
+        lastVoiceMark = nil
+
+        // 回到被撤销的那张：撤销的意义就是「回到刚才那张重新决定」
+        if let target = assets.firstIndex(where: { $0.id == mark.id }) {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { index = target }
+        }
+        flash(.undo)
+        haptic(.rigid)
+    }
+
+    private func flash(_ value: VoiceFlash) {
+        voiceFlashTask?.cancel()
+        voiceFlash = value
+        voiceFlashTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) { voiceFlash = nil }
+        }
+    }
+
+    private func haptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
+        let generator = UIImpactFeedbackGenerator(style: style)
+        generator.prepare()
+        generator.impactOccurred()
     }
 
     /// 飞行动画的目标位置依赖媒体区尺寸；尚未完成布局时用屏幕尺寸兜底
@@ -726,7 +889,9 @@ struct PhotoDetailView: View {
         }
     }
 
-    private func move(_ dir: Direction) {
+    /// - Parameter dismissOnEdge: 到达边界时是否关闭查看器。
+    ///   右滑到第一张时关闭是手势的预期行为；但语音说「上一张」到边界时应该只提示，不能把页面关掉。
+    private func move(_ dir: Direction, dismissOnEdge: Bool = true) {
         direction = dir
         resetZoom()
         if let next = nextNavigableIndex(from: index, dir: dir) {
@@ -755,7 +920,7 @@ struct PhotoDetailView: View {
                     image = nil
                 }
             }
-        } else {
+        } else if dismissOnEdge {
             dismiss()
         }
     }

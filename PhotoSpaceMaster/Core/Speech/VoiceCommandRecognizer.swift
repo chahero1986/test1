@@ -11,23 +11,37 @@ import Speech
 ///   否则「免删」会被「删」抢先命中、误判成移入垃圾箱。
 /// - 一句话可以含多个指令（「删、删、过、留」）：按「已消费前缀」增量扫描，
 ///   命中一个就把游标推过去，既不重复触发，也不会漏掉后半句。
-/// - 每轮识别结束后 0.6 秒自动重开。麦克风不重启（audioEngine 常开，只换 request），
-///   避免每句话都「咔哒」开关一次麦克风。
+/// - 每轮识别结束后约 0.16 秒自动重开。麦克风不重启（audioEngine 常开，只换 request），
+///   避免每句话都「咔哒」开关一次麦克风。间隙越短越不容易吞掉下一个字。
 @MainActor
 final class VoiceCommandRecognizer: ObservableObject {
-    enum Command { case trash, protect, next }
+    enum Command {
+        case trash      // 移入垃圾箱
+        case protect    // 加入免删除
+        case next       // 下一张
+        case previous   // 上一张
+        case undo       // 撤销上一次语音标记
+        case stop       // 结束聆听
+    }
+
+    /// 提示条占位文案：与下方词表保持一致，改词表时同步改这里
+    static let hint = "说：删 · 留 · 过 · 上 · 撤 · 停"
 
     @Published private(set) var isListening = false
-    /// 实时识别文字（界面用黄色显示，让用户确认是否听对）
+    /// 实时识别文字（界面用黄色显示，让用户确认是否听对）。
+    /// 跨轮次保留 2 秒再清空：否则每轮重启都会闪回占位文案，界面抖动。
     @Published private(set) var transcript = ""
     @Published var errorMessage: String?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
     private let box = RequestBox()
+    private let bag = ObserverBag()
     private var audioEngine: AVAudioEngine?
     private var task: SFSpeechRecognitionTask?
     private var pendingRestart: Task<Void, Never>?
+    private var transcriptIdle: Task<Void, Never>?
     private var hasTap = false
+    private var lastRebuild = Date.distantPast
 
     /// 用户意图（点开 = true，点关 / 离开页面 = false）。
     /// 与 isListening 分开：授权是异步的，等授权期间用户可能已经退出，
@@ -44,33 +58,31 @@ final class VoiceCommandRecognizer: ObservableObject {
 
     private var onCommand: ((Command) -> Void)?
 
+    init() {
+        installObservers()
+    }
+
     // MARK: - 对外控制
 
     func start(onCommand: @escaping (Command) -> Void) {
-        guard !wantsListening else { return }
-        wantsListening = true
         self.onCommand = onCommand
+        if wantsListening {
+            // 系统中断 / 耳机插拔后可能停在「想听但引擎已停」的状态：
+            // 此时直接忽略点击会让按钮像坏了一样，重新拉起引擎更符合预期
+            rebuildEngine(force: true)
+            return
+        }
+        wantsListening = true
         Task { await begin() }
     }
 
     func stop() {
         wantsListening = false
         isListening = false
-        generation += 1
-        pendingRestart?.cancel()
-        pendingRestart = nil
-        task?.cancel()
-        task = nil
-        box.replace(with: nil)?.endAudio()
-        if let engine = audioEngine {
-            engine.stop()
-            if hasTap {
-                engine.inputNode.removeTap(onBus: 0)
-                hasTap = false
-            }
-        }
-        audioEngine = nil
+        teardownEngine()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        transcriptIdle?.cancel()
+        transcriptIdle = nil
         transcript = ""
         consumedText = ""
         onCommand = nil
@@ -147,12 +159,38 @@ final class VoiceCommandRecognizer: ObservableObject {
         startTask()
     }
 
+    /// 关掉引擎与当前识别任务，但保留 wantsListening（系统中断后用得上）
+    private func teardownEngine() {
+        task?.cancel()
+        task = nil
+        pendingRestart?.cancel()
+        pendingRestart = nil
+        // 先摘掉引用再 endAudio：音频线程此刻 append 会拿到 nil，不会写给已关闭的 request
+        box.replace(with: nil)?.endAudio()
+        if let engine = audioEngine {
+            engine.stop()
+            if hasTap {
+                engine.inputNode.removeTap(onBus: 0)
+                hasTap = false
+            }
+        }
+        audioEngine = nil
+        generation += 1
+    }
+
     private func makeRequest() -> SFSpeechAudioBufferRecognitionRequest {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.requiresOnDeviceRecognition = true
+        // 标点会被拼进识别文本，干扰「删」「过」这类单字匹配
+        request.addsPunctuation = false
         // 提示识别器偏向这些词，明显提升单字指令的命中率
-        request.contextualStrings = ["删", "删除", "垃圾", "过", "下一个", "跳过", "留", "保留", "免删"]
+        request.contextualStrings = [
+            "删", "删除", "删掉", "垃圾",
+            "留", "保留", "免删",
+            "过", "跳过", "下一个",
+            "上一张", "撤销", "停止"
+        ]
         return request
     }
 
@@ -161,7 +199,6 @@ final class VoiceCommandRecognizer: ObservableObject {
         generation += 1
         let gen = generation
         consumedText = ""
-        transcript = ""
 
         let request = makeRequest()
         box.replace(with: request)
@@ -170,14 +207,17 @@ final class VoiceCommandRecognizer: ObservableObject {
             Task { @MainActor in
                 guard let self, self.generation == gen else { return }
                 if let result { self.handle(result) }
-                if error != nil || (result?.isFinal ?? false) {
-                    self.scheduleRestart()
+                if error != nil {
+                    // 出错通常意味着上一轮任务没正常收尾，退避一点再重开，避免疯狂重试耗电
+                    self.scheduleRestart(after: 0.45)
+                } else if result?.isFinal ?? false {
+                    self.scheduleRestart(after: 0.16)
                 }
             }
         }
     }
 
-    private func scheduleRestart() {
+    private func scheduleRestart(after delay: TimeInterval) {
         pendingRestart?.cancel()
         task?.cancel()
         task = nil
@@ -185,9 +225,75 @@ final class VoiceCommandRecognizer: ObservableObject {
         box.replace(with: nil)?.endAudio()
         guard isListening else { return }
         pendingRestart = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 600_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard let self, !Task.isCancelled, self.isListening else { return }
             self.startTask()
+        }
+    }
+
+    // MARK: - 系统事件（来电、耳机插拔、音频服务重启）
+
+    private func installObservers() {
+        let center = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+
+        bag.add(center.addObserver(forName: AVAudioSession.interruptionNotification, object: session, queue: .main) { [weak self] note in
+            let raw = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) ?? 0
+            Task { @MainActor in self?.handleInterruption(raw) }
+        })
+        bag.add(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: .main) { [weak self] note in
+            let raw = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
+            Task { @MainActor in self?.handleRouteChange(raw) }
+        })
+        bag.add(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: session, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.rebuildEngine() }
+        })
+    }
+
+    /// 来电、闹钟会夺走麦克风。此时如果界面还显示「聆听中」就是在骗人，
+    /// 而且引擎已经停了，后续说的指令一句都收不到。
+    private func handleInterruption(_ raw: UInt) {
+        guard wantsListening, let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            isListening = false
+            teardownEngine()
+        case .ended:
+            rebuildEngine()
+        @unknown default:
+            break
+        }
+    }
+
+    private func handleRouteChange(_ raw: UInt) {
+        guard wantsListening, isListening else { return }
+        guard let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+        switch reason {
+        case .newDeviceAvailable, .oldDeviceUnavailable, .routeConfigurationChange, .override:
+            rebuildEngine()
+        default:
+            break
+        }
+    }
+
+    /// 耳机插拔、中断结束、音频服务重启都会让 AVAudioEngine 失效，原地重建。
+    private func rebuildEngine(force: Bool = false) {
+        guard wantsListening else { return }
+        // 中断结束和路由变化常常前后脚到达，去抖避免连着重启两次；
+        // 用户手动点按钮时不受去抖限制
+        if !force {
+            guard Date().timeIntervalSince(lastRebuild) > 0.5 else { return }
+        }
+        lastRebuild = Date()
+        teardownEngine()
+        do {
+            try startEngine()
+            isListening = true
+            errorMessage = nil
+        } catch {
+            isListening = false
+            wantsListening = false
+            errorMessage = "麦克风被系统中断，语音已停止。请重新点按麦克风继续。"
         }
     }
 
@@ -196,7 +302,7 @@ final class VoiceCommandRecognizer: ObservableObject {
     private func handle(_ result: SFSpeechRecognitionResult) {
         let text = result.bestTranscription.formattedString
         guard !text.isEmpty else { return }
-        transcript = text
+        touchTranscript(text)
 
         // 识别结果被重写（句首插字、改词）→ 已消费标记失效，从头重扫
         if !text.hasPrefix(consumedText) { consumedText = "" }
@@ -204,6 +310,17 @@ final class VoiceCommandRecognizer: ObservableObject {
         guard !fresh.isEmpty, let hit = Self.firstCommand(in: fresh) else { return }
         consumedText += String(fresh.prefix(hit.end))
         fire(hit.command)
+    }
+
+    /// 文字保留 2 秒再清空：让用户看清最后听到的是什么，同时不长期显示过期内容
+    private func touchTranscript(_ text: String) {
+        transcript = text
+        transcriptIdle?.cancel()
+        transcriptIdle = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.transcript = ""
+        }
     }
 
     private func fire(_ command: Command) {
@@ -218,26 +335,96 @@ final class VoiceCommandRecognizer: ObservableObject {
 
     /// 顺序即优先级：同一起始位置时取靠前的词。
     /// 「留」类必须排在「删」类之前，「免删」才不会命中「删」。
+    /// 「上一张」必须排在「一张」类之前，否则会被短词抢先命中。
     private static let keywords: [(word: String, command: Command)] = [
+        // 撤销（放最前：含「回」等字，短词容易抢位）
+        ("撤销", .undo), ("撤回", .undo), ("反悔", .undo), ("恢复", .undo),
+        // 停止聆听
+        ("停止", .stop), ("停下", .stop), ("结束", .stop), ("关闭", .stop), ("关了", .stop),
+        // 保留类
         ("免删", .protect), ("保留", .protect), ("留着", .protect), ("留下", .protect), ("留", .protect),
-        ("删除", .trash), ("删掉", .trash), ("删", .trash), ("垃圾", .trash), ("不要", .trash),
-        ("下一个", .next), ("下一张", .next), ("跳过", .next), ("继续", .next), ("过", .next)
+        // 删除类
+        ("删除", .trash), ("删掉", .trash), ("删", .trash), ("垃圾", .trash),
+        // 上一张
+        ("上一张", .previous), ("上一个", .previous), ("上一幅", .previous),
+        ("回退", .previous), ("往前", .previous), ("前一张", .previous),
+        // 下一张
+        ("下一张", .next), ("下一个", .next), ("下一幅", .next), ("跳过", .next), ("过", .next)
     ]
 
-    /// 在文本中找**最早出现**的指令词；同位置取优先级高（rank 小）的那个。
-    /// 返回命中指令与它在文本中的结束偏移，供调用方推进游标。
-    private static func firstCommand(in text: String) -> (command: Command, end: Int)? {
-        var best: (lower: String.Index, end: String.Index, command: Command, rank: Int)?
-        for (rank, item) in keywords.enumerated() {
-            guard let range = text.range(of: item.word) else { continue }
-            if let current = best {
-                if range.lowerBound > current.lower { continue }
-                if range.lowerBound == current.lower, rank >= current.rank { continue }
+    /// 在文本中找**最早出现**的有效指令；同位置取优先级高（rank 小）的那个。
+    /// 被规则否决的命中（否定前缀、词中「过」）会被跳过，继续往后找，
+    /// 所以「不要跳过，下一个」仍然能正确执行「下一个」。
+    static func firstCommand(in text: String) -> (command: Command, end: Int)? {
+        var searchStart = text.startIndex
+        while searchStart < text.endIndex {
+            var best: (range: Range<String.Index>, command: Command, rank: Int)?
+            for (rank, item) in keywords.enumerated() {
+                guard let range = text.range(of: item.word, options: [], range: searchStart..<text.endIndex) else { continue }
+                if let current = best {
+                    if range.lowerBound > current.range.lowerBound { continue }
+                    if range.lowerBound == current.range.lowerBound, rank >= current.rank { continue }
+                }
+                best = (range, item.command, rank)
             }
-            best = (range.lowerBound, range.upperBound, item.command, rank)
+            guard let win = best else { return nil }
+            if let resolved = resolve(win.command, in: text, range: win.range) {
+                return (resolved, text.distance(from: text.startIndex, to: win.range.upperBound))
+            }
+            // 被否决：从下一个字符继续扫，保证循环一定前进
+            let next = text.index(after: win.range.lowerBound)
+            searchStart = next
         }
-        guard let win = best else { return nil }
-        return (win.command, text.distance(from: text.startIndex, to: win.end))
+        return nil
+    }
+
+    /// 语义修正
+    private static func resolve(_ command: Command, in text: String, range: Range<String.Index>) -> Command? {
+        // 「过」是最容易误中的单字：通过 / 不过 / 超过 / 经过 / 难过 都会命中。
+        // 要求它前面不是汉字、后面不是汉字（句尾语气词除外），即真正被单独说出来才算指令。
+        if text[range] == "过", !isStandaloneGuo(range, in: text) { return nil }
+
+        // 否定前缀：「不要删」「别删」语义相反，转成保留；「不要跳过」这类直接忽略
+        if isNegated(range, in: text) {
+            return command == .trash ? .protect : nil
+        }
+        return command
+    }
+
+    /// 句尾语气词：「过了」「过吧」是自然说法，不该被当成词中命中
+    private static let particles: Set<Character> = ["了", "吧", "啊", "呀", "呢", "哦", "哈", "嘛"]
+
+    private static func isStandaloneGuo(_ range: Range<String.Index>, in text: String) -> Bool {
+        if range.lowerBound > text.startIndex {
+            let prev = text[text.index(before: range.lowerBound)]
+            if isHan(prev) { return false }
+        }
+        if range.upperBound < text.endIndex {
+            let next = text[range.upperBound]
+            if isHan(next), !particles.contains(next) { return false }
+        }
+        return true
+    }
+
+    private static func isHan(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            (0x4E00...0x9FFF).contains(scalar.value) || (0x3400...0x4DBF).contains(scalar.value)
+        }
+    }
+
+    /// 命中位置往前 3 个字内出现「不 / 别 / 勿 / 甭 / 没」即视为否定
+    private static func isNegated(_ range: Range<String.Index>, in text: String) -> Bool {
+        var index = range.lowerBound
+        var steps = 0
+        while index > text.startIndex, steps < 3 {
+            index = text.index(before: index)
+            let character = text[index]
+            if "不别勿甭没".contains(character) { return true }
+            // 跨过标点/空格就不再看更前面的字，避免「不好，删」被误判成否定
+            if character == " " || character == "，" || character == "、" || character == "," { break }
+            steps += 1
+        }
+        return false
     }
 }
 
@@ -261,6 +448,22 @@ private final class RequestBox: @unchecked Sendable {
         lock.lock()
         current?.append(buffer)
         lock.unlock()
+    }
+}
+
+/// 通知监听令牌的容器：deinit 时统一摘除。
+/// 单独一个非隔离类，避免 @MainActor 类的 deinit 里碰隔离状态。
+private final class ObserverBag {
+    private var tokens: [NSObjectProtocol] = []
+
+    func add(_ token: NSObjectProtocol) {
+        tokens.append(token)
+    }
+
+    deinit {
+        for token in tokens {
+            NotificationCenter.default.removeObserver(token)
+        }
     }
 }
 
