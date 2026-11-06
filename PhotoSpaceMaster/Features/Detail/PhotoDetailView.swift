@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import UIKit
 
 /// 大图查看器
 /// - 顶部信息：日期时间 / 类型·分辨率·大小 / 地点·海拔 / 相机参数
@@ -8,6 +9,7 @@ import AVKit
 /// - 上滑：屏幕顶端红色渐变，照片旋转飞入右上角垃圾箱 = 移入垃圾箱（免确认）
 /// - 下滑：屏幕顶端绿色渐变，照片旋转飞入右上角免打扰入口 = 免删除
 /// - 标记后按当前浏览方向自动前进；双指缩放；底部收藏 / 评分
+/// - 语音：底部最左侧麦克风，说「删 / 过 / 留」批量刷图（纯本地识别）
 struct PhotoDetailView: View {
     /// forward = 下一张（新→旧）；backward = 上一张方向（旧→新）
     enum Direction { case forward, backward }
@@ -19,12 +21,18 @@ struct PhotoDetailView: View {
     @EnvironmentObject private var appState: AppState
     @EnvironmentObject private var ratings: RatingService
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     private let service = PhotoLibraryService.shared
 
     @State private var index: Int = 0
     @State private var direction: Direction = .forward
     @State private var appeared = false
+
+    // 语音指令
+    @StateObject private var voice = VoiceCommandRecognizer()
+    /// 媒体区实际尺寸：语音标记的飞行动画要按它计算目标位置
+    @State private var mediaSize: CGSize = .zero
 
     // 缩放与拖动
     @State private var scale: CGFloat = 1
@@ -94,6 +102,8 @@ struct PhotoDetailView: View {
                         mediaArea(size: proxy.size)
                         statusBadge
                         topGradient
+                        voiceHintBar
+                            .animation(.easeOut(duration: 0.2), value: voice.isListening)
                     }
                 }
                 if showRatingPanel { ratingPanel }
@@ -109,9 +119,31 @@ struct PhotoDetailView: View {
             .onAppear {
                 withAnimation(.easeOut(duration: 0.28)) { appeared = true }
             }
+            // 离开详情页或退到后台：立刻停止录音，不占麦克风
+            .onDisappear { voice.stop() }
+            .onChange(of: scenePhase) { phase in
+                if phase != .active { voice.stop() }
+            }
+            .alert("语音不可用", isPresented: voiceAlertBinding) {
+                Button("去设置") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+                Button("关闭", role: .cancel) {}
+            } message: {
+                Text(voice.errorMessage ?? "")
+            }
         }
         .scaleEffect(appeared ? 1 : 0.94)
         .opacity(appeared ? 1 : 0)
+    }
+
+    private var voiceAlertBinding: Binding<Bool> {
+        Binding(
+            get: { voice.errorMessage != nil },
+            set: { if !$0 { voice.errorMessage = nil } }
+        )
     }
 
     // MARK: - 工具栏（左上角返回 + 右上角三按钮）
@@ -129,6 +161,13 @@ struct PhotoDetailView: View {
             .accessibilityLabel("返回")
         }
         ToolbarItemGroup(placement: .navigationBarTrailing) {
+            // 聆听中的小红点：在右上角，不遮挡任何按钮
+            if voice.isListening {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 8, height: 8)
+                    .accessibilityLabel("语音聆听中")
+            }
             NavigationLink {
                 TrashView()
             } label: {
@@ -244,6 +283,31 @@ struct PhotoDetailView: View {
         }
     }
 
+    /// 聆听提示条：浮在照片上方，实时显示识别到的文字（黄色），让用户确认是否听对
+    @ViewBuilder
+    private var voiceHintBar: some View {
+        if voice.isListening {
+            VStack(spacing: 0) {
+                HStack(spacing: 7) {
+                    Image(systemName: "waveform")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                    Text(voice.transcript.isEmpty ? "请说：删 · 过 · 留" : voice.transcript)
+                        .font(.footnote)
+                        .lineLimit(1)
+                        .foregroundColor(voice.transcript.isEmpty ? .white.opacity(0.75) : .yellow)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(Color.black.opacity(0.7)))
+                .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 12)
+            .allowsHitTesting(false)
+        }
+    }
+
     private func mediaArea(size: CGSize) -> some View {
         let slideWidth = size.width
         return ZStack {
@@ -255,6 +319,8 @@ struct PhotoDetailView: View {
         }
         .offset(x: liveDrag.width, y: liveDrag.height)
         .opacity(swipeOutOpacity)
+        .onAppear { mediaSize = size }
+        .onChange(of: size) { mediaSize = $0 }
         .simultaneousGesture(
             MagnificationGesture()
                 .updating($pinchScale) { value, state, _ in state = value }
@@ -355,6 +421,7 @@ struct PhotoDetailView: View {
 
     private var bottomBar: some View {
         HStack {
+            voiceButton
             if appState.isTrashed(current.id) {
                 // 已入垃圾箱：仅提供取消删除，且禁止上滑/下滑标记
                 Button {
@@ -418,6 +485,64 @@ struct PhotoDetailView: View {
 
     /// 定位书签：再次点击取消书签；设置后可在首页筛选面板「转到定位」跳转
     private var isBookmarked: Bool { appState.settings.bookmarkAssetId == current.id }
+
+    // MARK: - 语音指令（纯本地识别，音频不出设备）
+
+    /// 麦克风按钮：点一下开始聆听，聆听中变红；再点结束
+    private var voiceButton: some View {
+        Button {
+            toggleVoice()
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: voice.isListening ? "mic.fill" : "mic")
+                    .font(.title3)
+                    .scaleEffect(voice.isListening ? 1.1 : 1)
+                Text(voice.isListening ? "聆听中" : "语音")
+                    .font(.caption2)
+            }
+            .foregroundColor(voice.isListening ? .red : .white)
+            .frame(maxWidth: .infinity)
+        }
+        .accessibilityLabel(voice.isListening ? "结束语音指令" : "开始语音指令")
+    }
+
+    private func toggleVoice() {
+        if voice.isListening {
+            voice.stop()
+            return
+        }
+        // 录音要接管音频会话，先暂停视频，避免声音被抢走后播放状态错乱
+        player?.pause()
+        voice.start { [self] command in
+            handleVoice(command)
+        }
+    }
+
+    /// 语音指令执行：复用与上滑/下滑完全相同的标记动画
+    /// （红色渐变 + 旋转飞入垃圾箱 / 绿色渐变 + 飞入免打扰）
+    private func handleVoice(_ command: VoiceCommandRecognizer.Command) {
+        switch command {
+        case .next:
+            advanceByVoice()
+        case .trash:
+            // 已入垃圾箱或已免删除的项目：再说「删」不再重复标记，直接看下一张
+            if canMark { commitMark(.trash, size: voiceMarkSize) } else { advanceByVoice() }
+        case .protect:
+            if canMark { commitMark(.protect, size: voiceMarkSize) } else { advanceByVoice() }
+        }
+    }
+
+    private func advanceByVoice() {
+        guard !isMarking else { return }
+        move(direction)
+    }
+
+    /// 飞行动画的目标位置依赖媒体区尺寸；尚未完成布局时用屏幕尺寸兜底
+    private var voiceMarkSize: CGSize {
+        if mediaSize.width > 1, mediaSize.height > 1 { return mediaSize }
+        let screen = UIScreen.main.bounds
+        return CGSize(width: screen.width, height: screen.height * 0.55)
+    }
 
     private var bookmarkButton: some View {
         Button {

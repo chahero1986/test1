@@ -20,6 +20,8 @@ targets:
           - UIInterfaceOrientationPortrait
         NSPhotoLibraryUsageDescription: 需要访问您的相册，以便浏览、整理和清理照片。所有处理均在本地完成，不会上传任何照片。
         NSPhotoLibraryAddUsageDescription: 需要保存权限以便将整理结果写回相册。
+        NSMicrophoneUsageDescription: 语音指令需要使用麦克风。音频仅在设备本地实时处理，不会上传、不会保存。
+        NSSpeechRecognitionUsageDescription: 语音指令需要使用语音识别能力。识别在设备本地完成，音频与识别文字均不会上传。
         NSUserTrackingUsageDescription: 为了向您展示更相关的广告，我们需要获取您的广告标识符权限。拒绝授权不影响使用，将展示非个性化广告。
         ITSAppUsesNonExemptEncryption: false
     settings:
