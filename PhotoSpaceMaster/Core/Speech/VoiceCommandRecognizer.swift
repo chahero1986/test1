@@ -29,7 +29,7 @@ final class VoiceCommandRecognizer: ObservableObject {
 
     @Published private(set) var isListening = false
     /// 实时识别文字（界面用黄色显示，让用户确认是否听对）。
-    /// 跨轮次保留 2 秒再清空：否则每轮重启都会闪回占位文案，界面抖动。
+    /// 指令一执行就清空：下一张照片从全新状态开始，不残留上一句的内容
     @Published private(set) var transcript = ""
     @Published var errorMessage: String?
 
@@ -40,8 +40,14 @@ final class VoiceCommandRecognizer: ObservableObject {
     private var task: SFSpeechRecognitionTask?
     private var pendingRestart: Task<Void, Never>?
     private var transcriptIdle: Task<Void, Never>?
+    /// 看门狗：识别任务长时间没有任何回调（不是 isFinal 也不是 error）就强制重启。
+    /// 真机上偶发「第一句正常、第二句起管线假死」——界面还显示聆听中，
+    /// 但说什么都没反应，文字停留在上一句。没有看门狗就永远卡死。
+    private var watchdog: Task<Void, Never>?
     private var hasTap = false
     private var lastRebuild = Date.distantPast
+    /// 识别器暂时不可用时的重试间隔（指数退避，成功后复位）
+    private var unavailableRetry: TimeInterval = 0.35
 
     /// 用户意图（点开 = true，点关 / 离开页面 = false）。
     /// 与 isListening 分开：授权是异步的，等授权期间用户可能已经退出，
@@ -161,6 +167,8 @@ final class VoiceCommandRecognizer: ObservableObject {
 
     /// 关掉引擎与当前识别任务，但保留 wantsListening（系统中断后用得上）
     private func teardownEngine() {
+        watchdog?.cancel()
+        watchdog = nil
         task?.cancel()
         task = nil
         pendingRestart?.cancel()
@@ -195,10 +203,25 @@ final class VoiceCommandRecognizer: ObservableObject {
     }
 
     private func startTask() {
-        guard audioEngine != nil, let recognizer = self.recognizer, recognizer.isAvailable else { return }
+        guard audioEngine != nil else { return }
+        guard let recognizer = self.recognizer else { return }
+        guard recognizer.isAvailable else {
+            // 暂时不可用（刚结束一轮识别后偶发）：稍后重试。
+            // 绝不能静默返回——那会让聆听状态还在、识别管线却已死，
+            // 表现就是「第二句开始说什么都没反应」。
+            unavailableRetry = min(unavailableRetry * 2, 3.0)
+            scheduleRestart(after: unavailableRetry)
+            return
+        }
+        unavailableRetry = 0.35
         generation += 1
         let gen = generation
+        // 新一轮从零开始：清掉上一句的识别文字和消费游标
         consumedText = ""
+        transcript = ""
+        transcriptIdle?.cancel()
+        transcriptIdle = nil
+        armWatchdog()
 
         let request = makeRequest()
         box.replace(with: request)
@@ -218,6 +241,12 @@ final class VoiceCommandRecognizer: ObservableObject {
     }
 
     private func scheduleRestart(after delay: TimeInterval) {
+        // 立刻作废旧任务的一切回调（含 cancel 本身引发的 error 回调）。
+        // 不作废的话：error 回调会再次进入 scheduleRestart，把真正的重启
+        // 一推再推，表现为「说完一句后长时间没反应」。
+        generation += 1
+        watchdog?.cancel()
+        watchdog = nil
         pendingRestart?.cancel()
         task?.cancel()
         task = nil
@@ -286,9 +315,10 @@ final class VoiceCommandRecognizer: ObservableObject {
         }
         lastRebuild = Date()
         teardownEngine()
+        // 先置位：startTask 里的看门狗依赖 isListening 判断是否需要武装
+        isListening = true
         do {
             try startEngine()
-            isListening = true
             errorMessage = nil
         } catch {
             isListening = false
@@ -302,11 +332,13 @@ final class VoiceCommandRecognizer: ObservableObject {
     private func handle(_ result: SFSpeechRecognitionResult) {
         let text = result.bestTranscription.formattedString
         guard !text.isEmpty else { return }
-        touchTranscript(text)
 
         // 识别结果被重写（句首插字、改词）→ 已消费标记失效，从头重扫
         if !text.hasPrefix(consumedText) { consumedText = "" }
         let fresh = String(text.dropFirst(consumedText.count))
+        // 只显示「还没执行」的部分：已执行的指令不再留在提示条上，
+        // 切到下一张照片时不会残留上一句的操作内容
+        touchTranscript(fresh)
         guard !fresh.isEmpty, let hit = Self.firstCommand(in: fresh) else { return }
         consumedText += String(fresh.prefix(hit.end))
         fire(hit.command)
@@ -321,6 +353,19 @@ final class VoiceCommandRecognizer: ObservableObject {
             guard let self, !Task.isCancelled else { return }
             self.transcript = ""
         }
+        armWatchdog()
+    }
+
+    /// 看门狗：任务启动或每次收到结果时重置。若 2.5 秒内没有任何回调
+    /// （识别管线假死时既不会 isFinal 也不会报错），强制重启识别任务。
+    private func armWatchdog() {
+        watchdog?.cancel()
+        guard isListening else { return }
+        watchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard let self, !Task.isCancelled, self.isListening else { return }
+            self.scheduleRestart(after: 0.05)
+        }
     }
 
     private func fire(_ command: Command) {
@@ -328,6 +373,11 @@ final class VoiceCommandRecognizer: ObservableObject {
         // 兜底防抖：增量扫描本身已避免重复，这里只防同一次识别被投递两遍
         guard now.timeIntervalSince(lastFire) > 0.15 else { return }
         lastFire = now
+        // 指令一旦执行就清空识别文字：切换到下一张时从全新状态开始，
+        // 不残留上一句的内容（操作结果由详情页的确认提示条负责展示）
+        transcript = ""
+        transcriptIdle?.cancel()
+        transcriptIdle = nil
         onCommand?(command)
     }
 
