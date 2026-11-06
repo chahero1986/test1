@@ -134,7 +134,7 @@ struct PhotoDetailView: View {
         _index = State(initialValue: startIndex)
     }
 
-    private var current: AssetInfo { assets[min(max(index, 0), assets.count - 1)] }
+    private var current: AssetInfo { assets[min(max(index, 0), max(assets.count - 1, 0))] }
     private var isZoomed: Bool { scale * pinchScale > 1.05 }
     private var ratingStars: Int { ratings.ratings[current.id] ?? 0 }
     /// 已入垃圾箱或免打扰的项目不允许上滑/下滑标记
@@ -143,47 +143,61 @@ struct PhotoDetailView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                topInfo
-                GeometryReader { proxy in
-                    ZStack {
-                        Color.black
-                        mediaArea(size: proxy.size)
-                        statusBadge
-                        topGradient
-                        voiceHintBar
-                            .animation(.easeOut(duration: 0.2), value: voice.isListening)
-                            .animation(.easeOut(duration: 0.18), value: voiceFlash)
+        Group {
+            if assets.isEmpty {
+                // 查看器存活期间外层列表被清空（全部删除 / 筛选变化）：
+                // 立刻退出，避免任何下标访问；空数组时 current 的下标无意义
+                Color.black.ignoresSafeArea()
+                    .onAppear { dismiss() }
+            } else {
+                NavigationStack {
+                    VStack(spacing: 0) {
+                        topInfo
+                        GeometryReader { proxy in
+                            ZStack {
+                                Color.black
+                                mediaArea(size: proxy.size)
+                                statusBadge
+                                topGradient
+                                voiceHintBar
+                                    .animation(.easeOut(duration: 0.2), value: voice.isListening)
+                                    .animation(.easeOut(duration: 0.18), value: voiceFlash)
+                            }
+                        }
+                        if showRatingPanel { ratingPanel }
+                        bottomBar
+                    }
+                    .background(Color.black.ignoresSafeArea(edges: .bottom))
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.black, for: .navigationBar)
+                    .toolbarBackground(.visible, for: .navigationBar)
+                    .toolbarColorScheme(.dark, for: .navigationBar)
+                    .toolbar { toolbarContent }
+                    .task(id: current.id) { loadCurrent() }
+                    .onAppear {
+                        withAnimation(.easeOut(duration: 0.28)) { appeared = true }
+                    }
+                    // 离开详情页或退到后台：立刻停止录音，不占麦克风
+                    .onDisappear { voice.stop() }
+                    .onChange(of: scenePhase) { phase in
+                        if phase != .active { voice.stop() }
+                    }
+                    // 外层列表在查看器存活期间变短（标记删除 / 筛选变化）：
+                    // 把 index 收回有效范围，否则相邻预加载任务会越界闪退
+                    .onChange(of: assets.count) { _ in
+                        if index >= assets.count { index = max(0, assets.count - 1) }
+                    }
+                    .alert("语音不可用", isPresented: voiceAlertBinding) {
+                        Button("去设置") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                        Button("关闭", role: .cancel) {}
+                    } message: {
+                        Text(voice.errorMessage ?? "")
                     }
                 }
-                if showRatingPanel { ratingPanel }
-                bottomBar
-            }
-            .background(Color.black.ignoresSafeArea(edges: .bottom))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.black, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            .toolbar { toolbarContent }
-            .task(id: current.id) { loadCurrent() }
-            .onAppear {
-                withAnimation(.easeOut(duration: 0.28)) { appeared = true }
-            }
-            // 离开详情页或退到后台：立刻停止录音，不占麦克风
-            .onDisappear { voice.stop() }
-            .onChange(of: scenePhase) { phase in
-                if phase != .active { voice.stop() }
-            }
-            .alert("语音不可用", isPresented: voiceAlertBinding) {
-                Button("去设置") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                }
-                Button("关闭", role: .cancel) {}
-            } message: {
-                Text(voice.errorMessage ?? "")
             }
         }
         .scaleEffect(appeared ? 1 : 0.94)
@@ -1014,8 +1028,11 @@ struct PhotoDetailView: View {
         }
         // 幻灯片相邻项预加载（图片载入画面，视频载入海报并预取播放项）
         Task {
-            guard index > 0, current.id == info.id else { return }
-            let neighbor = assets[index - 1]
+            // index 必须按当前数组上下界都校验：外层列表可能在查看器存活期间变短，
+            // 只判下界的话 assets[index - 1] 会直接越界闪退
+            let prevIndex = index - 1
+            guard prevIndex >= 0, prevIndex < assets.count, current.id == info.id else { return }
+            let neighbor = assets[prevIndex]
             let img = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
             if neighbor.kind == .video {
                 AssetDetailProvider.shared.preloadPlayerItem(for: neighbor)
@@ -1023,8 +1040,9 @@ struct PhotoDetailView: View {
             if current.id == info.id { prevImage = img }
         }
         Task {
-            guard index < assets.count - 1, current.id == info.id else { return }
-            let neighbor = assets[index + 1]
+            let nextIndex = index + 1
+            guard nextIndex >= 0, nextIndex < assets.count, current.id == info.id else { return }
+            let neighbor = assets[nextIndex]
             let img = await ThumbnailManager.shared.largeImage(for: neighbor, side: 700)
             if neighbor.kind == .video {
                 AssetDetailProvider.shared.preloadPlayerItem(for: neighbor)
