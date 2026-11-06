@@ -155,6 +155,12 @@ struct PhotoGridView<BottomBar: View>: View {
                     ScrollView {
                         gridContent(width: geo.size.width)
                     }
+                    // 用户一旦开始拖动，立刻作废所有还没执行的定位修正滚动：
+                    // 自动修正必须让位于用户操作，否则拖到别处后会被拉回定位位置
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 10)
+                            .onChanged { _ in jumpSeq += 1 }
+                    )
                     .onChange(of: jumpToken) { _ in
                         scrollToBookmark(proxy)
                     }

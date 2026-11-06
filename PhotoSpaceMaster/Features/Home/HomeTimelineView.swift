@@ -218,16 +218,12 @@ struct HomeTimelineView: View {
         }
     }
 
-    /// 定位到网格中的某个项目（书签 / 关闭查看器后回跳）：
-    /// 立即滚一次，稍后再补一次——深跳转时首次 scrollTo 常落在估算位置，
-    /// 第二次在已稳定的布局上执行就能对准（等价于用户「再点一次」）
+    /// 定位到网格中的某个项目（书签 / 关闭查看器后回跳）。
+    /// 深跳转的布局修正由 PhotoGridView 内部的多次收敛滚动负责，
+    /// 这里只触发一次；额外再补滚会拉长自动修正窗口，拖动时被拉回去。
     private func locateInGrid(_ id: String) {
         jumpTargetId = id
         jumpToken += 1
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            guard jumpTargetId == id else { return }
-            jumpToken += 1
-        }
     }
 
     // MARK: - 跨页日期定位
@@ -246,12 +242,9 @@ struct HomeTimelineView: View {
         guard pendingJump != nil, appState.selectedTab == .home else { return }
         pendingJump = nil
         rebuildGroups()
+        // 深跳转的布局修正由 PhotoGridView 内部的多次收敛滚动负责；
+        // 这里不再补二次定位，避免用户拖动时被自动修正拉回
         DispatchQueue.main.async { jumpToAppointedDate() }
-        // 二次定位：与用户「再点一次」等效，用稳定后的布局修正首次滚动的偏差
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
-            guard appState.selectedTab == .home else { return }
-            jumpToAppointedDate()
-        }
     }
 
     /// 定位到指定时间周期（年/月/日）内的照片：
